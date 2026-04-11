@@ -314,7 +314,7 @@ export default function ProjectScriptsControl({
                         type="button"
                         variant="ghost"
                         size="icon-xs"
-                        className="absolute right-0 top-1/2 size-6 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"
+                        className="absolute right-0 top-1/2 size-6 -translate-y-1/2 translate-x-2 opacity-0 pointer-events-none transition-[opacity,translate] duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:translate-x-0 group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"
                         aria-label={`Edit ${script.name}`}
                         onPointerDown={(event) => {
                           event.preventDefault();

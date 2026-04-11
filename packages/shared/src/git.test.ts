@@ -78,6 +78,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      ci: null,
     };
 
     expect(applyGitStatusStreamEvent(null, { _tag: "remoteUpdated", remote })).toEqual({
@@ -115,6 +116,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 0,
       behindCount: 0,
       pr: null,
+      ci: null,
     };
 
     const remote: GitStatusRemoteResult = {
@@ -122,6 +124,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      ci: null,
     };
 
     expect(applyGitStatusStreamEvent(current, { _tag: "remoteUpdated", remote })).toEqual({
@@ -130,6 +133,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      ci: null,
     });
   });
 });

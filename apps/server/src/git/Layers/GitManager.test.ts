@@ -584,11 +584,18 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      mergePullRequest: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "merge", String(input.prNumber), "--squash", "--delete-branch"],
+        }).pipe(Effect.asVoid),
       checkoutPullRequest: (input) =>
         execute({
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
+      listBranchWorkflowRuns: () => Effect.succeed([]),
+      listPullRequestChecks: () => Effect.succeed([]),
     },
     ghCalls,
   };
@@ -872,6 +879,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         aheadCount: 0,
         behindCount: 0,
         pr: null,
+        ci: null,
       });
     }),
   );
@@ -901,6 +909,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         aheadCount: 0,
         behindCount: 0,
         pr: null,
+        ci: null,
       });
     }),
   );

@@ -9,7 +9,7 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunResult } from "../../processRunner";
-import type { GitHubCliError } from "@t3tools/contracts";
+import type { GitCiCheck, GitHubCliError } from "@t3tools/contracts";
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -79,6 +79,14 @@ export interface GitHubCliShape {
   }) => Effect.Effect<void, GitHubCliError>;
 
   /**
+   * Squash merge a pull request and delete its branch.
+   */
+  readonly mergePullRequest: (input: {
+    readonly cwd: string;
+    readonly prNumber: number;
+  }) => Effect.Effect<void, GitHubCliError>;
+
+  /**
    * Resolve repository default branch through GitHub metadata.
    */
   readonly getDefaultBranch: (input: {
@@ -93,6 +101,24 @@ export interface GitHubCliShape {
     readonly reference: string;
     readonly force?: boolean;
   }) => Effect.Effect<void, GitHubCliError>;
+
+  /**
+   * List recent GitHub workflow runs for a branch head SHA.
+   */
+  readonly listBranchWorkflowRuns: (input: {
+    readonly cwd: string;
+    readonly branch: string;
+    readonly headSha: string;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<GitCiCheck>, GitHubCliError>;
+
+  /**
+   * List GitHub pull request checks.
+   */
+  readonly listPullRequestChecks: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<ReadonlyArray<GitCiCheck>, GitHubCliError>;
 }
 
 /**

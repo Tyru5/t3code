@@ -2142,6 +2142,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 aheadCount: 0,
                 behindCount: 0,
                 pr: null,
+                ci: null,
               }),
             status: () =>
               Effect.succeed({
@@ -2155,6 +2156,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 aheadCount: 0,
                 behindCount: 0,
                 pr: null,
+                ci: null,
               }),
             runStackedAction: (input, options) =>
               Effect.gen(function* () {
@@ -2416,6 +2418,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   aheadCount: 0,
                   behindCount: 0,
                   pr: null,
+                  ci: null,
                 };
               }),
             status: () =>
@@ -2432,6 +2435,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   aheadCount: 0,
                   behindCount: 0,
                   pr: null,
+                  ci: null,
                 };
               }),
           },
@@ -2493,6 +2497,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   aheadCount: 0,
                   behindCount: 0,
                   pr: null,
+                  ci: null,
                 };
               }),
             status: () =>
@@ -2509,6 +2514,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   aheadCount: 0,
                   behindCount: 0,
                   pr: null,
+                  ci: null,
                 };
               }),
             runStackedAction: () => Effect.fail(gitError),
@@ -2564,6 +2570,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   aheadCount: 0,
                   behindCount: 0,
                   pr: null,
+                  ci: null,
                 }),
               ),
           },
@@ -2607,6 +2614,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     aheadCount: 0,
                     behindCount: 0,
                     pr: null,
+                    ci: null,
                   }),
                 ),
               runStackedAction: () =>
@@ -2685,6 +2693,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     aheadCount: 0,
                     behindCount: 0,
                     pr: null,
+                    ci: null,
                   }),
                 ),
               runStackedAction: () =>

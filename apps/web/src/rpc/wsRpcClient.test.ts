@@ -32,6 +32,7 @@ const baseRemoteStatus: GitStatusRemoteResult = {
   aheadCount: 0,
   behindCount: 0,
   pr: null,
+  ci: null,
 };
 
 describe("wsRpcClient", () => {
@@ -84,6 +85,7 @@ describe("wsRpcClient", () => {
           aheadCount: 0,
           behindCount: 0,
           pr: null,
+          ci: null,
         },
       ],
       [

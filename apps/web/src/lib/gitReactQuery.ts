@@ -34,6 +34,8 @@ export const gitMutationKeys = {
     ["git", "mutation", "run-stacked-action", environmentId ?? null, cwd] as const,
   pull: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["git", "mutation", "pull", environmentId ?? null, cwd] as const,
+  mergePullRequest: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["git", "mutation", "merge-pull-request", environmentId ?? null, cwd] as const,
   preparePullRequestThread: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["git", "mutation", "prepare-pull-request-thread", environmentId ?? null, cwd] as const,
 };
@@ -209,6 +211,26 @@ export function gitPullMutationOptions(input: {
       if (!input.cwd || !input.environmentId) throw new Error("Git pull is unavailable.");
       const api = ensureEnvironmentApi(input.environmentId);
       return api.git.pull({ cwd: input.cwd });
+    },
+    onSuccess: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.environmentId, input.cwd);
+    },
+  });
+}
+
+export function gitMergePullRequestMutationOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationKey: gitMutationKeys.mergePullRequest(input.environmentId, input.cwd),
+    mutationFn: async (prNumber: number) => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Pull request merge is unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.git.mergePullRequest({ cwd: input.cwd, prNumber });
     },
     onSuccess: async () => {
       await invalidateGitBranchQueries(input.queryClient, input.environmentId, input.cwd);

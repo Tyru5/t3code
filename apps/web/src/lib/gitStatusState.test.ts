@@ -50,6 +50,7 @@ const BASE_STATUS: GitStatusResult = {
   aheadCount: 0,
   behindCount: 0,
   pr: null,
+  ci: null,
 };
 
 const gitClient = {

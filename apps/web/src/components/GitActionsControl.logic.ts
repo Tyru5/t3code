@@ -1,16 +1,19 @@
 import type {
+  GitCiCheck,
+  GitCiSummary,
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import { formatGitCiCountsSummary } from "../lib/gitCi";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
-export type GitDialogAction = "commit" | "push" | "create_pr";
+export type GitDialogAction = "commit" | "push" | "create_pr" | "merge_pr";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push" | "pr" | "merge_pr";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
@@ -105,6 +108,7 @@ export function buildMenuItems(
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
+  const canMergePr = !isBusy && hasOpenPr;
 
   return [
     {
@@ -139,6 +143,18 @@ export function buildMenuItems(
           kind: "open_dialog",
           dialogAction: "create_pr",
         },
+    ...(hasOpenPr
+      ? [
+          {
+            id: "merge_pr" as const,
+            label: "Merge PR",
+            disabled: !canMergePr,
+            icon: "pr" as const,
+            kind: "open_dialog" as const,
+            dialogAction: "merge_pr" as const,
+          },
+        ]
+      : []),
   ];
 }
 
@@ -371,3 +387,119 @@ export function resolveLiveThreadBranchUpdate(input: {
 
 // Re-export from shared for backwards compatibility in this module's exports
 export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+
+export function formatGitCiLabel(summary: GitCiSummary): string {
+  if (summary.overallState === "failure") {
+    return summary.counts.total > 0
+      ? `CI failed ${summary.counts.fail}/${summary.counts.total}`
+      : "CI failed";
+  }
+  if (summary.overallState === "pending") {
+    return "CI pending";
+  }
+  if (summary.overallState === "success") {
+    return summary.counts.total > 0
+      ? `CI passed ${summary.counts.pass}/${summary.counts.total}`
+      : "CI passed";
+  }
+  return "CI complete";
+}
+
+export function formatGitCiTooltipSummary(summary: GitCiSummary): string {
+  return formatGitCiCountsSummary(summary);
+}
+
+export function describeGitCiOutcome(summary: GitCiSummary): string {
+  if (summary.overallState === "failure") {
+    if (summary.counts.fail === 0) {
+      return "Checks reported a failure state.";
+    }
+    return summary.counts.fail === 1
+      ? "1 failing check needs attention."
+      : `${summary.counts.fail} failing checks need attention.`;
+  }
+
+  if (summary.overallState === "pending") {
+    if (summary.counts.pending === 0) {
+      return "Checks are still settling.";
+    }
+    return summary.counts.pending === 1
+      ? "1 check is still running."
+      : `${summary.counts.pending} checks are still running.`;
+  }
+
+  if (summary.overallState === "success") {
+    return summary.counts.pass > 0 ? "All reported checks passed." : "Checks completed cleanly.";
+  }
+
+  if (summary.overallState === "none") {
+    return "No CI checks have been reported for this branch yet.";
+  }
+
+  return "Checks completed without a decisive CI outcome.";
+}
+
+export function formatGitCiCheckStatus(check: GitCiCheck): string {
+  if (check.bucket === "fail") {
+    return "Failed";
+  }
+  if (check.bucket === "pass") {
+    return "Passed";
+  }
+  if (check.bucket === "skipping") {
+    return "Skipped";
+  }
+  if (check.bucket === "cancel") {
+    return "Cancelled";
+  }
+
+  const normalizedState = check.state.trim().toLowerCase();
+  if (normalizedState.includes("queue")) {
+    return "Queued";
+  }
+  if (normalizedState.includes("wait")) {
+    return "Waiting";
+  }
+  return "Running";
+}
+
+export function getGitCiCheckToneClassName(check: GitCiCheck): string {
+  if (check.bucket === "fail") {
+    return "text-destructive";
+  }
+  if (check.bucket === "pending") {
+    return "text-warning";
+  }
+  if (check.bucket === "pass") {
+    return "text-success";
+  }
+  return "text-muted-foreground";
+}
+
+export function getGitCiCheckBadgeVariant(
+  check: GitCiCheck,
+): "error" | "warning" | "success" | "secondary" {
+  if (check.bucket === "fail") {
+    return "error";
+  }
+  if (check.bucket === "pending") {
+    return "warning";
+  }
+  if (check.bucket === "pass") {
+    return "success";
+  }
+  return "secondary";
+}
+
+export function getGitCiToneClassName(summary: GitCiSummary): string {
+  if (summary.overallState === "failure") {
+    return "text-destructive";
+  }
+  if (summary.overallState === "pending") {
+    return "text-warning";
+  }
+  if (summary.overallState === "success") {
+    return "text-success";
+  }
+  return "text-muted-foreground";
+}

@@ -47,7 +47,7 @@ export interface ExecuteGitResult {
   readonly stderrTruncated: boolean;
 }
 
-export interface GitStatusDetails extends Omit<GitStatusResult, "pr"> {
+export interface GitStatusDetails extends Omit<GitStatusResult, "pr" | "ci"> {
   upstreamRef: string | null;
 }
 
@@ -204,6 +204,11 @@ export interface GitCoreShape {
     cwd: string,
     key: string,
   ) => Effect.Effect<string | null, GitCommandError>;
+
+  /**
+   * Read the full SHA for the current HEAD commit.
+   */
+  readonly readHeadSha: (cwd: string) => Effect.Effect<string, GitCommandError>;
 
   /**
    * Determine whether the provided cwd is inside a git work tree.

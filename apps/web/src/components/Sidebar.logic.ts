@@ -155,6 +155,11 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+export function isThreadFullyCompleted(thread: ThreadStatusInput): boolean {
+  if (!thread.latestTurn?.completedAt) return false;
+  return isLatestTurnSettled(thread.latestTurn, thread.session);
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -457,6 +462,31 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+export function sortThreadsWithPins<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & ThreadSortInput,
+>(
+  threads: readonly T[],
+  sortOrder: SidebarThreadSortOrder,
+  pinnedThreadIds: ReadonlySet<string>,
+  getThreadKey: (thread: T) => string = (thread) => thread.id,
+): T[] {
+  if (pinnedThreadIds.size === 0) {
+    return sortThreads(threads, sortOrder);
+  }
+
+  const pinned: T[] = [];
+  const unpinned: T[] = [];
+  for (const thread of threads) {
+    if (pinnedThreadIds.has(getThreadKey(thread))) {
+      pinned.push(thread);
+    } else {
+      unpinned.push(thread);
+    }
+  }
+
+  return [...sortThreads(pinned, sortOrder), ...sortThreads(unpinned, sortOrder)];
 }
 
 export function getFallbackThreadIdAfterDelete<
