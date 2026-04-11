@@ -1,17 +1,40 @@
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import type {
   GitActionProgressEvent,
+  GitCiCheck,
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  Clock3Icon,
+  CloudUploadIcon,
+  ExternalLinkIcon,
+  GitBranchIcon,
+  GitCommitIcon,
+  InfoIcon,
+  LoaderCircleIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  TriangleAlertIcon,
+  XCircleIcon,
+} from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  describeGitCiOutcome,
+  formatGitCiCheckStatus,
+  formatGitCiLabel,
+  formatGitCiTooltipSummary,
+  getGitCiCheckBadgeVariant,
+  getGitCiCheckToneClassName,
+  getGitCiToneClassName,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -22,6 +45,7 @@ import {
   resolveQuickAction,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
@@ -37,17 +61,33 @@ import { Group, GroupSeparator } from "~/components/ui/group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import {
+  Sheet,
+  SheetDescription,
+  SheetHeader,
+  SheetPanel,
+  SheetPopup,
+  SheetTitle,
+} from "~/components/ui/sheet";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager, type ThreadToastData } from "~/components/ui/toast";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
   gitInitMutationOptions,
+  gitMergePullRequestMutationOptions,
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
 } from "~/lib/gitReactQuery";
+import {
+  formatGitCiSourceLabel,
+  getRelevantGitCiChecks,
+  resolveThreadGitCi,
+  sortGitCiChecks,
+} from "~/lib/gitCi";
 import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
-import { newCommandId, randomUUID } from "~/lib/utils";
+import { cn, newCommandId, randomUUID } from "~/lib/utils";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readEnvironmentApi } from "~/environmentApi";
@@ -164,6 +204,13 @@ function getMenuActionDisabledReason({
     return "Push is currently unavailable.";
   }
 
+  if (item.id === "merge_pr") {
+    if (!hasOpenPr) {
+      return "No open PR to merge.";
+    }
+    return "Merge PR is currently unavailable.";
+  }
+
   if (hasOpenPr) {
     return "View PR is currently unavailable.";
   }
@@ -210,13 +257,143 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return count === 1 ? singular : plural;
+}
+
+function formatCiAbsoluteTimestamp(isoDate: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(isoDate));
+}
+
+function formatShortSha(sha: string): string {
+  return sha.slice(0, 8);
+}
+
+function GitCiStateIcon({
+  overallState,
+  className,
+}: {
+  overallState: "success" | "failure" | "pending" | "neutral" | "none";
+  className?: string;
+}) {
+  if (overallState === "failure") {
+    return <XCircleIcon className={cn("size-4", className)} />;
+  }
+  if (overallState === "pending") {
+    return <LoaderCircleIcon className={cn("size-4 animate-spin", className)} />;
+  }
+  if (overallState === "success") {
+    return <CheckCircle2Icon className={cn("size-4", className)} />;
+  }
+  return <ShieldCheckIcon className={cn("size-4", className)} />;
+}
+
+function GitCiStatCard(props: {
+  label: string;
+  value: string;
+  tone?: "default" | "failure" | "pending" | "success" | undefined;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border px-3 py-3 shadow-xs backdrop-blur",
+        props.tone === "failure" &&
+          "border-destructive/18 bg-destructive/[0.06] text-destructive-foreground",
+        props.tone === "pending" && "border-warning/18 bg-warning/[0.07] text-warning-foreground",
+        props.tone === "success" && "border-success/18 bg-success/[0.07] text-success-foreground",
+        props.tone === "default" && "border-border/70 bg-background/72 text-foreground",
+      )}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] opacity-70">
+        {props.label}
+      </div>
+      <div className="mt-2 font-mono text-lg tracking-tight">{props.value}</div>
+    </div>
+  );
+}
+
+function GitCiMetaFact(props: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-background/72 px-3 py-2 shadow-xs">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {props.label}
+      </div>
+      <div className={cn("mt-1 text-sm text-foreground", props.mono && "font-mono")}>
+        {props.value}
+      </div>
+    </div>
+  );
+}
+
+function GitCiActionTile(props: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  buttonLabel?: string | undefined;
+  buttonVariant?: "default" | "outline" | "secondary" | undefined;
+  disabled?: boolean | undefined;
+  onClick?: (() => void) | undefined;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-[1.35rem] border border-border/70 bg-[linear-gradient(145deg,color-mix(in_oklab,var(--color-background)_86%,white),color-mix(in_oklab,var(--color-muted)_76%,transparent))] p-4 shadow-xs">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.12),transparent_34%)] dark:bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.08),transparent_34%)]" />
+      <div className="relative space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+          {props.eyebrow}
+        </div>
+        <div>
+          <div className="font-heading text-base leading-tight">{props.title}</div>
+          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{props.description}</p>
+        </div>
+        {props.buttonLabel ? (
+          <Button
+            size="sm"
+            variant={props.buttonVariant ?? "outline"}
+            disabled={props.disabled}
+            onClick={props.onClick}
+            className="justify-between"
+          >
+            <span>{props.buttonLabel}</span>
+            <ArrowUpRightIcon className="size-3.5" />
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function GitCiCheckStatusBadge({ check }: { check: GitCiCheck }) {
+  return (
+    <Badge variant={getGitCiCheckBadgeVariant(check)} size="sm" className="gap-1">
+      <span className={getGitCiCheckToneClassName(check)}>
+        <GitCiStateIcon
+          overallState={
+            check.bucket === "fail"
+              ? "failure"
+              : check.bucket === "pending"
+                ? "pending"
+                : check.bucket === "pass"
+                  ? "success"
+                  : "neutral"
+          }
+          className="size-3"
+        />
+      </span>
+      {formatGitCiCheckStatus(check)}
+    </Badge>
+  );
+}
+
 export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
-  const threadToastData = useMemo(
+  const threadToastData = useMemo<ThreadToastData | undefined>(
     () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
     [activeThreadRef],
   );
@@ -236,6 +413,7 @@ export default function GitActionsControl({
   const setThreadBranch = useStore((store) => store.setThreadBranch);
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  const [isCiSheetOpen, setIsCiSheetOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -326,6 +504,26 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
   const gitStatusForActions = gitStatus;
+  const threadCi = resolveThreadGitCi(
+    activeServerThread?.branch ?? activeDraftThread?.branch ?? null,
+    gitStatusForActions,
+  );
+  const relevantThreadCiChecks = useMemo(
+    () => (threadCi ? getRelevantGitCiChecks(threadCi) : []),
+    [threadCi],
+  );
+  const sortedThreadCiChecks = useMemo(
+    () => (threadCi ? sortGitCiChecks(threadCi.checks) : []),
+    [threadCi],
+  );
+  const failingThreadCiChecks = useMemo(
+    () => sortedThreadCiChecks.filter((check) => check.bucket === "fail"),
+    [sortedThreadCiChecks],
+  );
+  const pendingThreadCiChecks = useMemo(
+    () => sortedThreadCiChecks.filter((check) => check.bucket === "pending"),
+    [sortedThreadCiChecks],
+  );
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -346,6 +544,13 @@ export default function GitActionsControl({
   const pullMutation = useMutation(
     gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
   );
+  const mergePullRequestMutation = useMutation(
+    gitMergePullRequestMutationOptions({
+      environmentId: activeEnvironmentId,
+      cwd: gitCwd,
+      queryClient,
+    }),
+  );
 
   const isRunStackedActionRunning =
     useIsMutating({
@@ -353,7 +558,12 @@ export default function GitActionsControl({
     }) > 0;
   const isPullRunning =
     useIsMutating({ mutationKey: gitMutationKeys.pull(activeEnvironmentId, gitCwd) }) > 0;
-  const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+  const isMergePullRequestRunning =
+    useIsMutating({
+      mutationKey: gitMutationKeys.mergePullRequest(activeEnvironmentId, gitCwd),
+    }) > 0;
+  const isGitActionRunning =
+    isRunStackedActionRunning || isPullRunning || isMergePullRequestRunning;
   const isSelectingWorktreeBase =
     !activeServerThread &&
     activeDraftThread?.envMode === "worktree" &&
@@ -398,6 +608,48 @@ export default function GitActionsControl({
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
+  const ciOverviewBadges = useMemo(() => {
+    if (!gitStatusForActions) {
+      return [];
+    }
+
+    const badges: Array<{
+      label: string;
+      variant: "outline" | "warning" | "error" | "success" | "secondary";
+    }> = [];
+
+    badges.push({
+      label: gitStatusForActions.branch ?? "Detached HEAD",
+      variant: gitStatusForActions.branch ? "outline" : "warning",
+    });
+
+    if (gitStatusForActions.isDefaultBranch) {
+      badges.push({ label: "Default branch", variant: "warning" });
+    }
+    if (gitStatusForActions.hasWorkingTreeChanges) {
+      badges.push({ label: "Uncommitted changes", variant: "warning" });
+    }
+    if (gitStatusForActions.aheadCount > 0) {
+      badges.push({
+        label: `${gitStatusForActions.aheadCount} ahead`,
+        variant: "success",
+      });
+    }
+    if (gitStatusForActions.behindCount > 0) {
+      badges.push({
+        label: `${gitStatusForActions.behindCount} behind`,
+        variant: "warning",
+      });
+    }
+    if (!gitStatusForActions.hasUpstream) {
+      badges.push({ label: "No upstream", variant: "secondary" });
+    }
+    if (gitStatusForActions.pr?.state === "open") {
+      badges.push({ label: `PR #${gitStatusForActions.pr.number}`, variant: "success" });
+    }
+
+    return badges;
+  }, [gitStatusForActions]);
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -482,6 +734,134 @@ export default function GitActionsControl({
       });
     });
   }, [gitStatusForActions, threadToastData]);
+
+  const openExternalLink = useCallback(
+    (url: string | null | undefined, failureTitle: string) => {
+      if (!url) {
+        return;
+      }
+      const api = readLocalApi();
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Link opening is unavailable.",
+          data: threadToastData,
+        });
+        return;
+      }
+
+      void api.shell.openExternal(url).catch((err: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: failureTitle,
+          description: err instanceof Error ? err.message : "An error occurred.",
+          data: threadToastData,
+        });
+      });
+    },
+    [threadToastData],
+  );
+
+  const mergeOpenPullRequest = useCallback(() => {
+    const openPr = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr : null;
+    if (!openPr) {
+      toastManager.add({
+        type: "error",
+        title: "No open PR found.",
+        data: threadToastData,
+      });
+      return;
+    }
+
+    const promise = mergePullRequestMutation.mutateAsync(openPr.number);
+    toastManager.promise(promise, {
+      loading: {
+        title: `Merging PR #${openPr.number}...`,
+        data: threadToastData,
+      },
+      success: (result) => ({
+        title: `Merged PR #${result.prNumber}`,
+        description: "Squash merged and deleted branch.",
+        data: threadToastData
+          ? {
+              ...threadToastData,
+              dismissAfterVisibleMs: 10_000,
+            }
+          : {
+              dismissAfterVisibleMs: 10_000,
+            },
+        actionProps: {
+          children: "View PR",
+          onClick: () => {
+            const api = readLocalApi();
+            if (!api) {
+              return;
+            }
+            void api.shell.openExternal(result.prUrl);
+          },
+        },
+      }),
+      error: (err) => ({
+        title: "Merge failed",
+        description: err instanceof Error ? err.message : "An error occurred.",
+        data: threadToastData,
+      }),
+    });
+    void promise.catch(() => undefined);
+  }, [gitStatusForActions?.pr, mergePullRequestMutation, threadToastData]);
+
+  const openGitCiTarget = useCallback(() => {
+    openExternalLink(threadCi?.targetUrl, "Unable to open CI link");
+  }, [openExternalLink, threadCi?.targetUrl]);
+
+  const openGitCiCheckLink = useCallback(
+    (check: GitCiCheck) => {
+      openExternalLink(check.link, "Unable to open check link");
+    },
+    [openExternalLink],
+  );
+
+  const openCiSheet = useCallback(() => {
+    setIsCiSheetOpen(true);
+    if (!gitCwd) {
+      return;
+    }
+    void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
+      () => undefined,
+    );
+  }, [activeEnvironmentId, gitCwd]);
+
+  const refreshCiSheet = useCallback(() => {
+    if (!gitCwd) {
+      return;
+    }
+    void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to refresh CI status",
+        description: error instanceof Error ? error.message : "An error occurred.",
+        data: threadToastData,
+      });
+    });
+  }, [activeEnvironmentId, gitCwd, threadToastData]);
+
+  const openFirstFailingCheck = useCallback(() => {
+    const firstFailingCheck = failingThreadCiChecks[0];
+    if (!firstFailingCheck) {
+      openGitCiTarget();
+      return;
+    }
+    openGitCiCheckLink(firstFailingCheck);
+  }, [failingThreadCiChecks, openGitCiCheckLink, openGitCiTarget]);
+
+  const openFirstPendingCheck = useCallback(() => {
+    const firstPendingCheck = pendingThreadCiChecks[0];
+    if (!firstPendingCheck) {
+      openGitCiTarget();
+      return;
+    }
+    openGitCiCheckLink(firstPendingCheck);
+  }, [openGitCiCheckLink, openGitCiTarget, pendingThreadCiChecks]);
 
   runGitActionWithToast = useEffectEvent(
     async ({
@@ -746,7 +1126,7 @@ export default function GitActionsControl({
     });
   };
 
-  const runQuickAction = () => {
+  const runQuickAction = useCallback(() => {
     if (quickAction.kind === "open_pr") {
       void openExistingPr();
       return;
@@ -784,7 +1164,112 @@ export default function GitActionsControl({
     if (quickAction.action) {
       void runGitActionWithToast({ action: quickAction.action });
     }
-  };
+  }, [openExistingPr, pullMutation, quickAction, runGitActionWithToast, threadToastData]);
+
+  const ciActionTiles = useMemo(() => {
+    if (!threadCi) {
+      return [];
+    }
+
+    const items: Array<{
+      id: string;
+      eyebrow: string;
+      title: string;
+      description: string;
+      buttonLabel?: string;
+      buttonVariant?: "default" | "outline" | "secondary";
+      disabled?: boolean;
+      onClick?: () => void;
+    }> = [];
+
+    if (!quickAction.disabled) {
+      items.push({
+        id: "recommended",
+        eyebrow: "Recommended",
+        title: quickAction.label,
+        description:
+          quickAction.kind === "run_pull"
+            ? "Sync the branch before judging CI against stale commits."
+            : "Continue the branch flow directly from the CI panel.",
+        buttonLabel: quickAction.label,
+        buttonVariant: "default",
+        onClick: runQuickAction,
+      });
+    } else {
+      items.push({
+        id: "recommended-disabled",
+        eyebrow: "Recommended",
+        title: quickAction.label,
+        description: quickActionDisabledReason ?? "No git action is currently available.",
+      });
+    }
+
+    if (threadCi.targetUrl) {
+      items.push({
+        id: "provider-run",
+        eyebrow: "Provider",
+        title: "Open CI provider view",
+        description: "Inspect the canonical run page, annotations, and provider-native logs.",
+        buttonLabel: "Open run",
+        onClick: openGitCiTarget,
+      });
+    }
+
+    if (failingThreadCiChecks.length > 0) {
+      const firstFailure = failingThreadCiChecks[0]!;
+      items.push({
+        id: "failing-check",
+        eyebrow: "Failing check",
+        title: firstFailure.name,
+        description:
+          firstFailure.description ??
+          "Jump directly to the first failing check and inspect the provider logs.",
+        buttonLabel: firstFailure.link ? "Open failing check" : "Open run",
+        buttonVariant: "outline",
+        onClick: openFirstFailingCheck,
+      });
+    } else if (pendingThreadCiChecks.length > 0) {
+      const firstPending = pendingThreadCiChecks[0]!;
+      items.push({
+        id: "pending-check",
+        eyebrow: "Live status",
+        title: firstPending.name,
+        description:
+          firstPending.description ??
+          "Checks are still running. Follow the live job instead of waiting blind.",
+        buttonLabel: firstPending.link ? "Open live check" : "Open run",
+        buttonVariant: "secondary",
+        onClick: openFirstPendingCheck,
+      });
+    }
+
+    if (gitStatusForActions?.pr?.state === "open") {
+      items.push({
+        id: "open-pr",
+        eyebrow: "Pull request",
+        title: gitStatusForActions.pr.title,
+        description: `Review PR #${gitStatusForActions.pr.number} or merge it from the action menu.`,
+        buttonLabel: "Open PR",
+        onClick: () => {
+          void openExistingPr();
+        },
+      });
+    }
+
+    return items.slice(0, 4);
+  }, [
+    failingThreadCiChecks,
+    gitStatusForActions?.pr,
+    openExistingPr,
+    openFirstFailingCheck,
+    openFirstPendingCheck,
+    openGitCiTarget,
+    pendingThreadCiChecks,
+    quickAction,
+    quickActionDisabledReason,
+    runQuickAction,
+    threadCi,
+  ]);
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
@@ -798,6 +1283,10 @@ export default function GitActionsControl({
     }
     if (item.dialogAction === "create_pr") {
       void runGitActionWithToast({ action: "create_pr" });
+      return;
+    }
+    if (item.dialogAction === "merge_pr") {
+      void mergeOpenPullRequest();
       return;
     }
     setExcludedFiles(new Set());
@@ -893,6 +1382,52 @@ export default function GitActionsControl({
               </span>
             </Button>
           )}
+          {threadCi && (
+            <>
+              <GroupSeparator className="hidden @3xl/header-actions:block" />
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  render={
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className={cn(
+                        "relative overflow-hidden border-current/20 bg-background/80",
+                        getGitCiToneClassName(threadCi),
+                      )}
+                      onClick={openCiSheet}
+                    />
+                  }
+                >
+                  {formatGitCiLabel(threadCi)}
+                </PopoverTrigger>
+                <PopoverPopup tooltipStyle side="bottom" align="start" className="max-w-xs">
+                  <div className="space-y-2 text-xs">
+                    <div className="font-medium">{formatGitCiSourceLabel(threadCi)}</div>
+                    <div className="text-muted-foreground">
+                      {formatGitCiTooltipSummary(threadCi)}
+                    </div>
+                    {relevantThreadCiChecks.length > 0 && (
+                      <div className="space-y-1">
+                        {relevantThreadCiChecks.map((check) => (
+                          <div
+                            key={`${check.name}-${check.link ?? check.state}`}
+                            className="space-y-0.5"
+                          >
+                            <div className="font-medium">{check.name}</div>
+                            <div className="text-muted-foreground">
+                              {check.description ?? check.state}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </PopoverPopup>
+              </Popover>
+            </>
+          )}
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
@@ -971,6 +1506,212 @@ export default function GitActionsControl({
             </MenuPopup>
           </Menu>
         </Group>
+      )}
+
+      {threadCi && (
+        <Sheet open={isCiSheetOpen} onOpenChange={setIsCiSheetOpen}>
+          <SheetPopup className="w-full max-w-3xl" side="right" variant="inset">
+            <SheetHeader className="border-b border-border/70 pb-4">
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      <GitCiStateIcon
+                        overallState={threadCi.overallState}
+                        className={getGitCiToneClassName(threadCi)}
+                      />
+                      CI / CD cockpit
+                    </div>
+                    <div>
+                      <SheetTitle className="flex flex-wrap items-center gap-2 text-2xl leading-tight">
+                        <span>{formatGitCiLabel(threadCi)}</span>
+                        <Badge variant="outline">{formatGitCiSourceLabel(threadCi)}</Badge>
+                      </SheetTitle>
+                      <SheetDescription className="mt-2 max-w-3xl text-sm leading-relaxed">
+                        {describeGitCiOutcome(threadCi)}
+                      </SheetDescription>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={refreshCiSheet}>
+                      <RefreshCwIcon className="size-3.5" />
+                      Refresh
+                    </Button>
+                    {threadCi.targetUrl && (
+                      <Button size="sm" variant="outline" onClick={openGitCiTarget}>
+                        <ExternalLinkIcon className="size-3.5" />
+                        Open run
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {ciOverviewBadges.map((badge) => (
+                    <Badge key={badge.label} variant={badge.variant}>
+                      {badge.label}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </SheetHeader>
+
+            <SheetPanel className="space-y-5">
+              <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <GitCiStatCard
+                  label="Checks"
+                  value={`${threadCi.counts.total}`}
+                  tone={threadCi.counts.total === 0 ? "default" : undefined}
+                />
+                <GitCiStatCard
+                  label="Passed"
+                  value={`${threadCi.counts.pass}`}
+                  tone={threadCi.counts.pass > 0 ? "success" : "default"}
+                />
+                <GitCiStatCard
+                  label="Pending"
+                  value={`${threadCi.counts.pending}`}
+                  tone={threadCi.counts.pending > 0 ? "pending" : "default"}
+                />
+                <GitCiStatCard
+                  label="Failed"
+                  value={`${threadCi.counts.fail}`}
+                  tone={threadCi.counts.fail > 0 ? "failure" : "default"}
+                />
+                <GitCiStatCard
+                  label="Updated"
+                  value={formatRelativeTimeLabel(threadCi.updatedAt) ?? "Just now"}
+                />
+              </section>
+
+              <section className="grid gap-3 md:grid-cols-2">
+                <GitCiMetaFact label="Branch" value={threadCi.branch} mono />
+                <GitCiMetaFact label="Head SHA" value={formatShortSha(threadCi.headSha)} mono />
+                <GitCiMetaFact
+                  label="Last update"
+                  value={formatCiAbsoluteTimestamp(threadCi.updatedAt)}
+                />
+                <GitCiMetaFact label="Counts" value={formatGitCiTooltipSummary(threadCi)} />
+              </section>
+
+              {ciActionTiles.length > 0 && (
+                <section className="space-y-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Next steps
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {ciActionTiles.map((item) => (
+                      <GitCiActionTile
+                        key={item.id}
+                        eyebrow={item.eyebrow}
+                        title={item.title}
+                        description={item.description}
+                        buttonLabel={item.buttonLabel}
+                        buttonVariant={item.buttonVariant}
+                        disabled={item.disabled}
+                        onClick={item.onClick}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                      Check breakdown
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {threadCi.counts.total === 0
+                        ? "No checks reported yet."
+                        : `${threadCi.counts.total} ${pluralize(threadCi.counts.total, "check")} reported for this branch.`}
+                    </p>
+                  </div>
+                  {gitStatusForActions?.pr?.state === "open" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={mergePullRequestMutation.isPending}
+                      onClick={mergeOpenPullRequest}
+                    >
+                      <GitHubIcon className="size-3.5" />
+                      Merge PR
+                    </Button>
+                  )}
+                </div>
+
+                {sortedThreadCiChecks.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border/70 bg-muted/25 px-4 py-6 text-sm text-muted-foreground">
+                    CI is connected, but the provider has not reported any checks yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {sortedThreadCiChecks.map((check) => (
+                      <div
+                        key={`${check.name}-${check.link ?? check.state}-${check.startedAt ?? "unknown"}`}
+                        className="rounded-2xl border border-border/70 bg-background/80 p-4 shadow-xs"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="font-medium">{check.name}</div>
+                              <GitCiCheckStatusBadge check={check} />
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                              <span className="inline-flex items-center gap-1">
+                                <GitBranchIcon className="size-3.5" />
+                                {check.workflow}
+                              </span>
+                              <span className="inline-flex items-center gap-1">
+                                <Clock3Icon className="size-3.5" />
+                                {check.completedAt
+                                  ? (formatRelativeTimeLabel(check.completedAt) ?? check.state)
+                                  : check.startedAt
+                                    ? (formatRelativeTimeLabel(check.startedAt) ?? check.state)
+                                    : check.state}
+                              </span>
+                            </div>
+                            {check.description && (
+                              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                                {check.description}
+                              </p>
+                            )}
+                          </div>
+                          {check.link && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openGitCiCheckLink(check)}
+                            >
+                              <ExternalLinkIcon className="size-3.5" />
+                              Open
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {(threadCi.counts.fail > 0 || threadCi.counts.pending > 0) && (
+                <section className="rounded-2xl border border-border/70 bg-muted/30 p-4">
+                  <div className="flex items-start gap-3">
+                    <TriangleAlertIcon
+                      className={cn("mt-0.5 size-4 shrink-0", getGitCiToneClassName(threadCi))}
+                    />
+                    <div className="space-y-1">
+                      <div className="font-medium">CI summary</div>
+                      <p className="text-sm text-muted-foreground">
+                        {formatGitCiTooltipSummary(threadCi)}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </SheetPanel>
+          </SheetPopup>
+        </Sheet>
       )}
 
       <Dialog

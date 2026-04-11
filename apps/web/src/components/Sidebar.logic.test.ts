@@ -10,6 +10,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isThreadFullyCompleted,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
@@ -18,6 +19,7 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  sortThreadsWithPins,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import { EnvironmentId, OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
@@ -57,6 +59,84 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("isThreadFullyCompleted", () => {
+  const baseThread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestTurn: null as OrchestrationLatestTurn | null,
+    lastVisitedAt: undefined as string | undefined,
+    session: null as {
+      provider: "codex";
+      status: "ready";
+      createdAt: string;
+      updatedAt: string;
+      orchestrationStatus: "ready";
+    } | null,
+  };
+
+  it("returns true when the latest turn is settled with a completedAt timestamp", () => {
+    expect(
+      isThreadFullyCompleted({
+        ...baseThread,
+        latestTurn: makeLatestTurn(),
+        session: {
+          provider: "codex",
+          status: "ready",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+          orchestrationStatus: "ready",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("returns true when there is no session", () => {
+    expect(
+      isThreadFullyCompleted({
+        ...baseThread,
+        latestTurn: makeLatestTurn(),
+        session: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when there is no latest turn", () => {
+    expect(
+      isThreadFullyCompleted({
+        ...baseThread,
+        latestTurn: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when the latest turn has no completedAt", () => {
+    expect(
+      isThreadFullyCompleted({
+        ...baseThread,
+        latestTurn: { ...makeLatestTurn(), completedAt: null },
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false while the session orchestration status is still running", () => {
+    expect(
+      isThreadFullyCompleted({
+        ...baseThread,
+        latestTurn: makeLatestTurn(),
+        session: {
+          provider: "codex",
+          status: "ready",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+          orchestrationStatus: "running" as const,
+        },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -651,6 +731,37 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("sortThreadsWithPins", () => {
+  it("keeps pinned threads first while preserving sort order within each partition", () => {
+    const thread1 = {
+      id: ThreadId.make("thread-1"),
+      createdAt: "2026-03-09T09:00:00.000Z",
+      updatedAt: "2026-03-09T09:10:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:10:00.000Z",
+    };
+    const thread2 = {
+      id: ThreadId.make("thread-2"),
+      createdAt: "2026-03-09T09:05:00.000Z",
+      updatedAt: "2026-03-09T09:20:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:20:00.000Z",
+    };
+    const thread3 = {
+      id: ThreadId.make("thread-3"),
+      createdAt: "2026-03-09T09:08:00.000Z",
+      updatedAt: "2026-03-09T09:15:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:15:00.000Z",
+    };
+
+    const ordered = sortThreadsWithPins(
+      [thread1, thread2, thread3],
+      "updated_at",
+      new Set([thread3.id, thread1.id]),
+    );
+
+    expect(ordered.map((thread) => thread.id)).toEqual([thread3.id, thread1.id, thread2.id]);
   });
 });
 

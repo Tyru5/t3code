@@ -8,6 +8,8 @@
  */
 import {
   GitActionProgressEvent,
+  GitMergePullRequestInput,
+  GitMergePullRequestResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -85,6 +87,13 @@ export interface GitManagerShape {
   readonly preparePullRequestThread: (
     input: GitPreparePullRequestThreadInput,
   ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
+
+  /**
+   * Squash merge an open pull request and delete its branch.
+   */
+  readonly mergePullRequest: (
+    input: GitMergePullRequestInput,
+  ) => Effect.Effect<GitMergePullRequestResult, GitManagerServiceError>;
 
   /**
    * Run a Git action (`commit`, `push`, `create_pr`, `commit_push`, `commit_push_pr`).

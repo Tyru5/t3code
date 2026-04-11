@@ -27,6 +27,7 @@ import {
 import { GitManager } from "../Services/GitManager.ts";
 
 const GIT_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
+const GIT_STATUS_PENDING_REFRESH_INTERVAL = Duration.seconds(10);
 
 interface GitStatusChange {
   readonly cwd: string;
@@ -58,6 +59,12 @@ function normalizeCwd(cwd: string): string {
 
 function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
+}
+
+function resolveRemotePollInterval(remote: GitStatusRemoteResult | null): Duration.Duration {
+  return remote?.ci?.overallState === "pending"
+    ? GIT_STATUS_PENDING_REFRESH_INTERVAL
+    : GIT_STATUS_REFRESH_INTERVAL;
 }
 
 export const GitStatusBroadcasterLive = Layer.effect(
@@ -212,16 +219,18 @@ export const GitStatusBroadcasterLive = Layer.effect(
           detail: error.message,
         });
 
-      return refreshRemoteStatus(cwd).pipe(
-        Effect.catch(logRefreshFailure),
-        Effect.andThen(
-          Effect.forever(
-            Effect.sleep(GIT_STATUS_REFRESH_INTERVAL).pipe(
-              Effect.andThen(refreshRemoteStatus(cwd).pipe(Effect.catch(logRefreshFailure))),
-            ),
-          ),
-        ),
-      );
+      const refreshRemoteStatusWithLogging = () =>
+        refreshRemoteStatus(cwd).pipe(
+          Effect.catch((error) => logRefreshFailure(error).pipe(Effect.as(null))),
+        );
+
+      const loop = (remote: GitStatusRemoteResult | null): Effect.Effect<never, never> =>
+        Effect.sleep(resolveRemotePollInterval(remote)).pipe(
+          Effect.andThen(refreshRemoteStatusWithLogging()),
+          Effect.flatMap(loop),
+        );
+
+      return refreshRemoteStatusWithLogging().pipe(Effect.flatMap(loop));
     };
 
     const retainRemotePoller = Effect.fn("retainRemotePoller")(function* (cwd: string) {

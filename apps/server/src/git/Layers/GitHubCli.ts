@@ -1,5 +1,5 @@
 import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
-import { TrimmedNonEmptyString } from "@t3tools/contracts";
+import { type GitCiCheck, TrimmedNonEmptyString } from "@t3tools/contracts";
 
 import { runProcess } from "../../processRunner";
 import { GitHubCliError } from "@t3tools/contracts";
@@ -86,7 +86,12 @@ function normalizeRepositoryCloneUrls(
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "getPullRequest"
+    | "getRepositoryCloneUrls"
+    | "listBranchWorkflowRuns"
+    | "listPullRequestChecks",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -99,6 +104,127 @@ function decodeGitHubJson<S extends Schema.Top>(
         }),
     ),
   );
+}
+
+const RawGitHubWorkflowRunSchema = Schema.Struct({
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  displayTitle: Schema.optional(Schema.NullOr(Schema.String)),
+  workflowName: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+  conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+  event: Schema.optional(Schema.NullOr(Schema.String)),
+  startedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawGitHubPrCheckSchema = Schema.Struct({
+  bucket: Schema.String,
+  completedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  event: Schema.optional(Schema.NullOr(Schema.String)),
+  link: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.String,
+  startedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.String,
+  workflow: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeWorkflowRunBucket(input: {
+  status?: string | null | undefined;
+  conclusion?: string | null | undefined;
+}): GitCiCheck["bucket"] {
+  const status = normalizeOptionalText(input.status)?.toLowerCase();
+  if (status !== "completed") {
+    return "pending";
+  }
+
+  const conclusion = normalizeOptionalText(input.conclusion)?.toLowerCase();
+  if (!conclusion) {
+    return "skipping";
+  }
+
+  if (conclusion === "success") {
+    return "pass";
+  }
+  if (conclusion === "cancelled" || conclusion === "canceled") {
+    return "cancel";
+  }
+  if (conclusion === "neutral" || conclusion === "skipped") {
+    return "skipping";
+  }
+  if (
+    conclusion === "failure" ||
+    conclusion === "timed_out" ||
+    conclusion === "startup_failure" ||
+    conclusion === "action_required"
+  ) {
+    return "fail";
+  }
+
+  return "skipping";
+}
+
+function normalizePrCheckBucket(bucket: string): GitCiCheck["bucket"] {
+  const normalized = bucket.trim().toLowerCase();
+  if (
+    normalized === "pass" ||
+    normalized === "fail" ||
+    normalized === "pending" ||
+    normalized === "skipping" ||
+    normalized === "cancel"
+  ) {
+    return normalized;
+  }
+  if (normalized === "cancelled" || normalized === "canceled") {
+    return "cancel";
+  }
+  return "pending";
+}
+
+function normalizeWorkflowRun(
+  raw: Schema.Schema.Type<typeof RawGitHubWorkflowRunSchema>,
+): GitCiCheck {
+  const workflow = normalizeOptionalText(raw.workflowName) ?? normalizeOptionalText(raw.name);
+  const name =
+    normalizeOptionalText(raw.name) ??
+    workflow ??
+    normalizeOptionalText(raw.displayTitle) ??
+    "Workflow run";
+  const status = normalizeOptionalText(raw.status);
+  const conclusion = normalizeOptionalText(raw.conclusion);
+  const normalizedState = [status, conclusion].filter((value) => value !== null).join(" / ");
+
+  return {
+    name,
+    workflow,
+    state: normalizedState.length > 0 ? normalizedState : "unknown",
+    bucket: normalizeWorkflowRunBucket(raw),
+    description: normalizeOptionalText(raw.displayTitle),
+    event: normalizeOptionalText(raw.event),
+    startedAt: normalizeOptionalText(raw.startedAt),
+    completedAt: normalizeOptionalText(raw.updatedAt),
+    link: normalizeOptionalText(raw.url),
+  };
+}
+
+function normalizePrCheck(raw: Schema.Schema.Type<typeof RawGitHubPrCheckSchema>): GitCiCheck {
+  return {
+    name: raw.name,
+    workflow: normalizeOptionalText(raw.workflow),
+    state: raw.state,
+    bucket: normalizePrCheckBucket(raw.bucket),
+    description: normalizeOptionalText(raw.description),
+    event: normalizeOptionalText(raw.event),
+    startedAt: normalizeOptionalText(raw.startedAt),
+    completedAt: normalizeOptionalText(raw.completedAt),
+    link: normalizeOptionalText(raw.link),
+  };
 }
 
 const makeGitHubCli = Effect.sync(() => {
@@ -217,6 +343,11 @@ const makeGitHubCli = Effect.sync(() => {
           input.bodyFile,
         ],
       }).pipe(Effect.asVoid),
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "merge", String(input.prNumber), "--squash", "--delete-branch"],
+      }).pipe(Effect.asVoid),
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
@@ -232,6 +363,55 @@ const makeGitHubCli = Effect.sync(() => {
         cwd: input.cwd,
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
+    listBranchWorkflowRuns: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "run",
+          "list",
+          "--branch",
+          input.branch,
+          "--commit",
+          input.headSha,
+          "--limit",
+          String(input.limit ?? 10),
+          "--json",
+          "attempt,conclusion,createdAt,databaseId,displayTitle,event,headBranch,headSha,name,number,startedAt,status,updatedAt,url,workflowDatabaseId,workflowName",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeGitHubJson(
+            raw,
+            Schema.Array(RawGitHubWorkflowRunSchema),
+            "listBranchWorkflowRuns",
+            "GitHub CLI returned invalid workflow run JSON.",
+          ),
+        ),
+        Effect.map((workflowRuns) => workflowRuns.map(normalizeWorkflowRun)),
+      ),
+    listPullRequestChecks: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "checks",
+          input.reference,
+          "--json",
+          "bucket,completedAt,description,event,link,name,startedAt,state,workflow",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeGitHubJson(
+            raw,
+            Schema.Array(RawGitHubPrCheckSchema),
+            "listPullRequestChecks",
+            "GitHub CLI returned invalid PR checks JSON.",
+          ),
+        ),
+        Effect.map((checks) => checks.map(normalizePrCheck)),
+      ),
   } satisfies GitHubCliShape;
 
   return service;

@@ -9,6 +9,7 @@ import {
   setThreadChangedFilesExpanded,
   syncProjects,
   syncThreads,
+  togglePinThread,
   type UiState,
 } from "./uiStateStore";
 
@@ -17,6 +18,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
+    pinnedThreadIds: new Set(),
     threadChangedFilesExpandedById: {},
     ...overrides,
   };
@@ -316,6 +318,52 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById).toEqual({});
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+
+  it("clearThreadUi removes pinned state for deleted threads", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      pinnedThreadIds: new Set([thread1, thread2]),
+    });
+
+    const next = clearThreadUi(initialState, thread1);
+
+    expect(next.pinnedThreadIds.has(thread1)).toBe(false);
+    expect(next.pinnedThreadIds.has(thread2)).toBe(true);
+  });
+
+  it("togglePinThread pins an unpinned thread", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const next = togglePinThread(initialState, thread1);
+
+    expect(next.pinnedThreadIds.has(thread1)).toBe(true);
+  });
+
+  it("togglePinThread unpins a pinned thread", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      pinnedThreadIds: new Set([thread1]),
+    });
+
+    const next = togglePinThread(initialState, thread1);
+
+    expect(next.pinnedThreadIds.has(thread1)).toBe(false);
+  });
+
+  it("syncThreads prunes pinned IDs for removed threads", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      pinnedThreadIds: new Set([thread1, thread2]),
+    });
+
+    const next = syncThreads(initialState, [{ key: thread1 }]);
+
+    expect(next.pinnedThreadIds.has(thread1)).toBe(true);
+    expect(next.pinnedThreadIds.has(thread2)).toBe(false);
   });
 
   it("setThreadChangedFilesExpanded stores collapsed turns per thread", () => {

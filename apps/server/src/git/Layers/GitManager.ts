@@ -16,6 +16,8 @@ import {
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,
+  type GitCiCheck,
+  type GitCiSummary,
   GitCommandError,
   GitRunStackedActionResult,
   GitStackedAction,
@@ -31,7 +33,7 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
-import { GitManagerError } from "@t3tools/contracts";
+import { GitHubCliError, GitManagerError } from "@t3tools/contracts";
 import {
   GitManager,
   type GitActionProgressReporter,
@@ -435,6 +437,100 @@ function toStatusPr(pr: PullRequestInfo): {
   };
 }
 
+function countGitCiBuckets(checks: ReadonlyArray<GitCiCheck>): GitCiSummary["counts"] {
+  let pass = 0;
+  let fail = 0;
+  let pending = 0;
+  let skipping = 0;
+  let cancel = 0;
+
+  for (const check of checks) {
+    if (check.bucket === "pass") {
+      pass += 1;
+    } else if (check.bucket === "fail") {
+      fail += 1;
+    } else if (check.bucket === "pending") {
+      pending += 1;
+    } else if (check.bucket === "skipping") {
+      skipping += 1;
+    } else {
+      cancel += 1;
+    }
+  }
+
+  return {
+    total: checks.length,
+    pass,
+    fail,
+    pending,
+    skipping,
+    cancel,
+  };
+}
+
+function resolveGitCiOverallState(counts: GitCiSummary["counts"]): GitCiSummary["overallState"] {
+  if (counts.fail > 0) {
+    return "failure";
+  }
+  if (counts.pending > 0) {
+    return "pending";
+  }
+  if (counts.pass > 0) {
+    return "success";
+  }
+  if (counts.cancel > 0 || counts.skipping > 0) {
+    return "neutral";
+  }
+  return "none";
+}
+
+function findFirstGitCiCheckLink(
+  checks: ReadonlyArray<GitCiCheck>,
+  bucket: GitCiCheck["bucket"],
+): string | null {
+  return checks.find((check) => check.bucket === bucket)?.link ?? null;
+}
+
+function buildGitCiSummary(input: {
+  source: GitCiSummary["source"];
+  branch: string;
+  headSha: string;
+  checks: ReadonlyArray<GitCiCheck>;
+  fallbackUrl: string | null;
+}): GitCiSummary {
+  const counts = countGitCiBuckets(input.checks);
+  const targetUrl =
+    findFirstGitCiCheckLink(input.checks, "fail") ??
+    findFirstGitCiCheckLink(input.checks, "pending") ??
+    input.fallbackUrl;
+
+  return {
+    provider: "github",
+    source: input.source,
+    branch: input.branch,
+    headSha: input.headSha,
+    overallState: resolveGitCiOverallState(counts),
+    targetUrl,
+    counts,
+    checks: [...input.checks],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function logGitCiLookupFailure(input: {
+  cwd: string;
+  source: GitCiSummary["source"];
+  branch: string;
+  error: GitHubCliError;
+}) {
+  return Effect.logWarning("git remote CI lookup degraded", {
+    cwd: input.cwd,
+    source: input.source,
+    branch: input.branch,
+    detail: input.error.message,
+  });
+}
+
 function normalizePullRequestReference(reference: string): string {
   const trimmed = reference.trim();
   const hashNumber = /^#(\d+)$/.exec(trimmed);
@@ -681,6 +777,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       return null;
     }
 
+    const hostingProvider =
+      details.branch !== null ? yield* resolveHostingProvider(cwd, details.branch) : null;
     const pr =
       details.branch !== null
         ? yield* findLatestPr(cwd, {
@@ -691,12 +789,72 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
             Effect.catch(() => Effect.succeed(null)),
           )
         : null;
+    let ci: GitCiSummary | null = null;
+    const branch = details.branch;
+
+    if (hostingProvider?.kind === "github" && branch !== null) {
+      const headSha = yield* gitCore.readHeadSha(cwd);
+      if (pr?.state === "open") {
+        ci = yield* gitHubCli
+          .listPullRequestChecks({
+            cwd,
+            reference: String(pr.number),
+          })
+          .pipe(
+            Effect.map((checks) =>
+              buildGitCiSummary({
+                source: "pull_request",
+                branch,
+                headSha,
+                checks,
+                fallbackUrl: pr.url,
+              }),
+            ),
+            Effect.catchTag("GitHubCliError", (error) =>
+              logGitCiLookupFailure({
+                cwd,
+                source: "pull_request",
+                branch,
+                error,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+      } else {
+        ci = yield* gitHubCli
+          .listBranchWorkflowRuns({
+            cwd,
+            branch,
+            headSha,
+            limit: 10,
+          })
+          .pipe(
+            Effect.map((checks) =>
+              buildGitCiSummary({
+                source: "branch",
+                branch,
+                headSha,
+                checks,
+                fallbackUrl: checks[0]?.link ?? null,
+              }),
+            ),
+            Effect.catchTag("GitHubCliError", (error) =>
+              logGitCiLookupFailure({
+                cwd,
+                source: "branch",
+                branch,
+                error,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+      }
+    }
 
     return {
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       pr,
+      ci,
     } satisfies GitStatusRemoteResult;
   });
   const remoteStatusResultCache = yield* Cache.makeWith(readRemoteStatus, {
@@ -1339,6 +1497,27 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     },
   );
 
+  const mergePullRequest: GitManagerShape["mergePullRequest"] = Effect.fn("mergePullRequest")(
+    function* (input) {
+      return yield* Effect.gen(function* () {
+        const pullRequest = yield* gitHubCli.getPullRequest({
+          cwd: input.cwd,
+          reference: String(input.prNumber),
+        });
+
+        yield* gitHubCli.mergePullRequest({
+          cwd: input.cwd,
+          prNumber: input.prNumber,
+        });
+
+        return {
+          prNumber: pullRequest.number,
+          prUrl: pullRequest.url,
+        };
+      }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
+    },
+  );
+
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -1725,6 +1904,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    mergePullRequest,
     preparePullRequestThread,
     runStackedAction,
   } satisfies GitManagerShape;

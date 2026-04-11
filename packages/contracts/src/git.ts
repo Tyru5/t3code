@@ -41,6 +41,18 @@ const GitPushStepStatus = Schema.Literals([
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
 const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
+export const GitCiSource = Schema.Literals(["branch", "pull_request"]);
+export type GitCiSource = typeof GitCiSource.Type;
+export const GitCiBucket = Schema.Literals(["pass", "fail", "pending", "skipping", "cancel"]);
+export type GitCiBucket = typeof GitCiBucket.Type;
+export const GitCiOverallState = Schema.Literals([
+  "success",
+  "failure",
+  "pending",
+  "neutral",
+  "none",
+]);
+export type GitCiOverallState = typeof GitCiOverallState.Type;
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
@@ -104,6 +116,12 @@ const GitResolvedPullRequest = Schema.Struct({
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 // RPC Inputs
+
+export const GitMergePullRequestInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  prNumber: PositiveInt,
+});
+export type GitMergePullRequestInput = typeof GitMergePullRequestInput.Type;
 
 export const GitStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -199,6 +217,37 @@ const GitStatusPr = Schema.Struct({
   headBranch: TrimmedNonEmptyStringSchema,
   state: GitStatusPrState,
 });
+export const GitCiCheck = Schema.Struct({
+  name: Schema.String,
+  workflow: Schema.NullOr(Schema.String),
+  state: Schema.String,
+  bucket: GitCiBucket,
+  description: Schema.NullOr(Schema.String),
+  event: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(Schema.String),
+  completedAt: Schema.NullOr(Schema.String),
+  link: Schema.NullOr(Schema.String),
+});
+export type GitCiCheck = typeof GitCiCheck.Type;
+export const GitCiSummary = Schema.Struct({
+  provider: Schema.Literal("github"),
+  source: GitCiSource,
+  branch: TrimmedNonEmptyStringSchema,
+  headSha: TrimmedNonEmptyStringSchema,
+  overallState: GitCiOverallState,
+  targetUrl: Schema.NullOr(Schema.String),
+  counts: Schema.Struct({
+    total: NonNegativeInt,
+    pass: NonNegativeInt,
+    fail: NonNegativeInt,
+    pending: NonNegativeInt,
+    skipping: NonNegativeInt,
+    cancel: NonNegativeInt,
+  }),
+  checks: Schema.Array(GitCiCheck),
+  updatedAt: Schema.String,
+});
+export type GitCiSummary = typeof GitCiSummary.Type;
 
 const GitStatusLocalShape = {
   isRepo: Schema.Boolean,
@@ -225,6 +274,7 @@ const GitStatusRemoteShape = {
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   pr: Schema.NullOr(GitStatusPr),
+  ci: Schema.NullOr(GitCiSummary),
 };
 
 export const GitStatusLocalResult = Schema.Struct(GitStatusLocalShape);
@@ -278,6 +328,12 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
+
+export const GitMergePullRequestResult = Schema.Struct({
+  prNumber: PositiveInt,
+  prUrl: Schema.String,
+});
+export type GitMergePullRequestResult = typeof GitMergePullRequestResult.Type;
 
 export const GitCheckoutResult = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyStringSchema),

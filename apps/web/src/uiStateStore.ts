@@ -18,6 +18,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
+  pinnedThreadIds?: string[];
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
 }
 
@@ -28,6 +29,7 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  pinnedThreadIds: ReadonlySet<string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -47,11 +49,13 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
+  pinnedThreadIds: new Set<string>(),
   threadChangedFilesExpandedById: {},
 };
 
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
+const persistedPinnedThreadIds = new Set<string>();
 const currentProjectCwdById = new Map<string, string>();
 let legacyKeysCleanedUp = false;
 
@@ -76,6 +80,7 @@ function readPersistedState(): UiState {
     hydratePersistedProjectState(parsed);
     return {
       ...initialState,
+      pinnedThreadIds: new Set(persistedPinnedThreadIds),
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
@@ -116,6 +121,7 @@ function sanitizePersistedThreadChangedFilesExpanded(
 function hydratePersistedProjectState(parsed: PersistedUiState): void {
   persistedExpandedProjectCwds.clear();
   persistedProjectOrderCwds.length = 0;
+  persistedPinnedThreadIds.clear();
   for (const cwd of parsed.expandedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
       persistedExpandedProjectCwds.add(cwd);
@@ -124,6 +130,11 @@ function hydratePersistedProjectState(parsed: PersistedUiState): void {
   for (const cwd of parsed.projectOrderCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
       persistedProjectOrderCwds.push(cwd);
+    }
+  }
+  for (const threadId of parsed.pinnedThreadIds ?? []) {
+    if (typeof threadId === "string" && threadId.length > 0) {
+      persistedPinnedThreadIds.add(threadId);
     }
   }
 }
@@ -156,6 +167,7 @@ function persistState(state: UiState): void {
       JSON.stringify({
         expandedProjectCwds,
         projectOrderCwds,
+        pinnedThreadIds: [...state.pinnedThreadIds],
         threadChangedFilesExpandedById,
       } satisfies PersistedUiState),
     );
@@ -203,6 +215,18 @@ function nestedBooleanRecordsEqual(
   }
   for (const [key, value] of leftEntries) {
     if (!(key in right) || !recordsEqual(value, right[key]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const value of left) {
+    if (!right.has(value)) {
       return false;
     }
   }
@@ -328,8 +352,12 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  const nextPinnedThreadIds = new Set(
+    [...state.pinnedThreadIds].filter((threadId) => retainedThreadIds.has(threadId)),
+  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
+    setsEqual(state.pinnedThreadIds, nextPinnedThreadIds) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
@@ -340,6 +368,7 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
+    pinnedThreadIds: nextPinnedThreadIds,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
   };
 }
@@ -392,18 +421,40 @@ export function markThreadUnread(
 
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
+  const hasPinnedState = state.pinnedThreadIds.has(threadId);
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  if (!hasVisitedState && !hasPinnedState && !hasChangedFilesState) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
+  const nextPinnedThreadIds = new Set(state.pinnedThreadIds);
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
   delete nextThreadLastVisitedAtById[threadId];
+  nextPinnedThreadIds.delete(threadId);
   delete nextThreadChangedFilesExpandedById[threadId];
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
+    pinnedThreadIds: nextPinnedThreadIds,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+  };
+}
+
+export function togglePinThread(state: UiState, threadId: string): UiState {
+  const nextPinnedThreadIds = new Set(state.pinnedThreadIds);
+  if (nextPinnedThreadIds.has(threadId)) {
+    nextPinnedThreadIds.delete(threadId);
+  } else {
+    nextPinnedThreadIds.add(threadId);
+  }
+
+  if (setsEqual(state.pinnedThreadIds, nextPinnedThreadIds)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    pinnedThreadIds: nextPinnedThreadIds,
   };
 }
 
@@ -529,6 +580,7 @@ interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt?: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   clearThreadUi: (threadId: string) => void;
+  togglePinThread: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
@@ -547,6 +599,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
+  togglePinThread: (threadId) => set((state) => togglePinThread(state, threadId)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),

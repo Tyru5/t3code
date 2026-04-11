@@ -3,6 +3,13 @@ import { assert, describe, it } from "vitest";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  describeGitCiOutcome,
+  formatGitCiCheckStatus,
+  formatGitCiLabel,
+  formatGitCiTooltipSummary,
+  getGitCiCheckBadgeVariant,
+  getGitCiCheckToneClassName,
+  getGitCiToneClassName,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -27,6 +34,7 @@ function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
     aheadCount: 0,
     behindCount: 0,
     pr: null,
+    ci: null,
     ...overrides,
   };
 }
@@ -86,6 +94,14 @@ describe("when: branch is clean and has an open PR", () => {
         disabled: false,
         icon: "pr",
         kind: "open_pr",
+      },
+      {
+        id: "merge_pr",
+        label: "Merge PR",
+        disabled: false,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "merge_pr",
       },
     ]);
   });
@@ -207,6 +223,14 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
         disabled: false,
         icon: "pr",
         kind: "open_pr",
+      },
+      {
+        id: "merge_pr",
+        label: "Merge PR",
+        disabled: false,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "merge_pr",
       },
     ]);
   });
@@ -930,6 +954,67 @@ describe("buildGitActionProgressStages", () => {
       "Generating PR content...",
       "Creating GitHub pull request...",
     ]);
+  });
+});
+
+describe("when: formatting CI state", () => {
+  const summary = {
+    provider: "github" as const,
+    source: "pull_request" as const,
+    branch: "feature/test",
+    headSha: "abcdef1234567890",
+    overallState: "failure" as const,
+    targetUrl: "https://example.com/checks",
+    counts: {
+      total: 4,
+      pass: 2,
+      fail: 1,
+      pending: 1,
+      skipping: 0,
+      cancel: 0,
+    },
+    checks: [],
+    updatedAt: "2026-04-10T12:00:00.000Z",
+  };
+
+  it("formats summary labels and outcome copy", () => {
+    assert.equal(formatGitCiLabel(summary), "CI failed 1/4");
+    assert.equal(formatGitCiTooltipSummary(summary), "1 failed, 1 pending, 2 passed");
+    assert.equal(describeGitCiOutcome(summary), "1 failing check needs attention.");
+    assert.equal(getGitCiToneClassName(summary), "text-destructive");
+  });
+
+  it("formats individual checks", () => {
+    const failingCheck = {
+      name: "test",
+      workflow: "CI",
+      state: "FAILURE",
+      bucket: "fail" as const,
+      description: null,
+      event: "pull_request",
+      startedAt: null,
+      completedAt: null,
+      link: null,
+    };
+    const queuedCheck = {
+      ...failingCheck,
+      state: "QUEUED",
+      bucket: "pending" as const,
+    };
+    const skippedCheck = {
+      ...failingCheck,
+      state: "SKIPPED",
+      bucket: "skipping" as const,
+    };
+
+    assert.equal(formatGitCiCheckStatus(failingCheck), "Failed");
+    assert.equal(formatGitCiCheckStatus(queuedCheck), "Queued");
+    assert.equal(formatGitCiCheckStatus(skippedCheck), "Skipped");
+    assert.equal(getGitCiCheckToneClassName(failingCheck), "text-destructive");
+    assert.equal(getGitCiCheckToneClassName(queuedCheck), "text-warning");
+    assert.equal(getGitCiCheckBadgeVariant(failingCheck), "error");
+    assert.equal(getGitCiCheckBadgeVariant(queuedCheck), "warning");
+    assert.equal(getGitCiCheckBadgeVariant(skippedCheck), "secondary");
   });
 });
 

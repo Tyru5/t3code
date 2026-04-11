@@ -842,7 +842,7 @@ function SidebarMenuAction({
       "peer-data-[size=lg]/menu-button:top-2.5",
       "group-data-[collapsible=icon]:hidden",
       showOnHover &&
-        "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-accent-foreground md:opacity-0",
+        "md:translate-x-2 md:opacity-0 transition-[opacity,translate] duration-150 group-focus-within/menu-item:translate-x-0 group-focus-within/menu-item:opacity-100 group-hover/menu-item:translate-x-0 group-hover/menu-item:opacity-100 data-[state=open]:translate-x-0 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-accent-foreground",
       className,
     ),
     "data-sidebar": "menu-action",

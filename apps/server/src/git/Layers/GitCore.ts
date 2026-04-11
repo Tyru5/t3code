@@ -1360,6 +1360,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         aheadCount: details.aheadCount,
         behindCount: details.behindCount,
         pr: null,
+        ci: null,
       })),
     );
 
@@ -1632,6 +1633,11 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     runGitStdout("GitCore.readConfigValue", cwd, ["config", "--get", key], true).pipe(
       Effect.map((stdout) => stdout.trim()),
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
+    );
+
+  const readHeadSha: GitCoreShape["readHeadSha"] = (cwd) =>
+    runGitStdout("GitCore.readHeadSha", cwd, ["rev-parse", "HEAD"]).pipe(
+      Effect.map((stdout) => stdout.trim()),
     );
 
   const isInsideWorkTree: GitCoreShape["isInsideWorkTree"] = (cwd) =>
@@ -2185,6 +2191,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     pullCurrentBranch,
     readRangeContext,
     readConfigValue,
+    readHeadSha,
     isInsideWorkTree,
     listWorkspaceFiles,
     filterIgnoredPaths,
