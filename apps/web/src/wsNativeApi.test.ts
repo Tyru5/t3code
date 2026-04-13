@@ -3,10 +3,9 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
-  EventId,
   type GitStatusResult,
+  type OrchestrationShellStreamItem,
   ProjectId,
-  type OrchestrationEvent,
   type ServerConfig,
   type ServerProvider,
   type SkillCatalogResult,
@@ -33,7 +32,7 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 }
 
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
-const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
+const shellStreamListeners = new Set<(event: OrchestrationShellStreamItem) => void>();
 const gitStatusListeners = new Set<(event: GitStatusResult) => void>();
 
 const rpcClientMock = {
@@ -83,14 +82,13 @@ const rpcClientMock = {
     subscribeLifecycle: vi.fn(),
   },
   orchestration: {
-    getSnapshot: vi.fn(),
     dispatchCommand: vi.fn(),
     getTurnDiff: vi.fn(),
     getFullThreadDiff: vi.fn(),
-    replayEvents: vi.fn(),
-    onDomainEvent: vi.fn((listener: (event: OrchestrationEvent) => void) =>
-      registerListener(orchestrationEventListeners, listener),
+    subscribeShell: vi.fn((listener: (event: OrchestrationShellStreamItem) => void) =>
+      registerListener(shellStreamListeners, listener),
     ),
+    subscribeThread: vi.fn(() => () => undefined),
   },
 };
 
@@ -213,7 +211,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   showContextMenuFallbackMock.mockReset();
   terminalEventListeners.clear();
-  orchestrationEventListeners.clear();
+  shellStreamListeners.clear();
   gitStatusListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
@@ -245,15 +243,15 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.server.getSkillsCatalog).toHaveBeenCalledWith();
   });
 
-  it("forwards terminal and orchestration stream events", async () => {
+  it("forwards terminal and shell stream events", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
-    const onDomainEvent = vi.fn();
+    const onShellEvent = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
-    api.orchestration.onDomainEvent(onDomainEvent);
+    api.orchestration.subscribeShell(onShellEvent);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -264,19 +262,11 @@ describe("wsNativeApi", () => {
     } as const;
     emitEvent(terminalEventListeners, terminalEvent);
 
-    const orchestrationEvent = {
+    const shellEvent = {
+      kind: "project-upserted" as const,
       sequence: 1,
-      eventId: EventId.makeUnsafe("event-1"),
-      aggregateKind: "project",
-      aggregateId: ProjectId.makeUnsafe("project-1"),
-      occurredAt: "2026-02-24T00:00:00.000Z",
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      type: "project.created",
-      payload: {
-        projectId: ProjectId.makeUnsafe("project-1"),
+      project: {
+        id: ProjectId.makeUnsafe("project-1"),
         title: "Project",
         workspaceRoot: "/tmp/workspace",
         defaultModelSelection: {
@@ -287,11 +277,11 @@ describe("wsNativeApi", () => {
         createdAt: "2026-02-24T00:00:00.000Z",
         updatedAt: "2026-02-24T00:00:00.000Z",
       },
-    } satisfies Extract<OrchestrationEvent, { type: "project.created" }>;
-    emitEvent(orchestrationEventListeners, orchestrationEvent);
+    } satisfies OrchestrationShellStreamItem;
+    emitEvent(shellStreamListeners, shellEvent);
 
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
-    expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
+    expect(onShellEvent).toHaveBeenCalledWith(shellEvent);
   });
 
   it("forwards git status stream events", async () => {
@@ -320,16 +310,16 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.git.refreshStatus).toHaveBeenCalledWith({ cwd: "/repo" });
   });
 
-  it("forwards orchestration stream subscription options to the RPC client", async () => {
+  it("forwards shell stream subscription options to the RPC client", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    const onDomainEvent = vi.fn();
+    const onShellEvent = vi.fn();
     const onResubscribe = vi.fn();
 
-    api.orchestration.onDomainEvent(onDomainEvent, { onResubscribe });
+    api.orchestration.subscribeShell(onShellEvent, { onResubscribe });
 
-    expect(rpcClientMock.orchestration.onDomainEvent).toHaveBeenCalledWith(onDomainEvent, {
+    expect(rpcClientMock.orchestration.subscribeShell).toHaveBeenCalledWith(onShellEvent, {
       onResubscribe,
     });
   });

@@ -248,7 +248,12 @@ export function createWsRpcClient(
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
-      subscribeAuthAccess: (_listener, _options) => () => {},
+      subscribeAuthAccess: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeAuthAccess]({}),
+          listener,
+          options,
+        ),
       subscribeConfig: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeServerConfig]({}),
