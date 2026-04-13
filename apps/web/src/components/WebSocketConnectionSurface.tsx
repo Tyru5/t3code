@@ -10,6 +10,7 @@ import {
   useWsConnectionStatus,
   WS_RECONNECT_MAX_ATTEMPTS,
 } from "../rpc/wsConnectionState";
+import { APP_BASE_NAME, APP_CONNECTION_COPY, APP_SERVER_DISPLAY_NAME } from "../branding";
 import { toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 
@@ -38,7 +39,7 @@ function formatRetryCountdown(nextRetryAt: string, nowMs: number): string {
 }
 
 function describeOfflineToast(): string {
-  return "WebSocket disconnected. Waiting for network.";
+  return `Waiting for network. ${APP_BASE_NAME} will reconnect automatically when you are back online.`;
 }
 
 function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
@@ -50,11 +51,11 @@ function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
 }
 
 function describeExhaustedToast(): string {
-  return "Retries exhausted trying to reconnect";
+  return `Retries exhausted. Check the ${APP_SERVER_DISPLAY_NAME} and try again.`;
 }
 
 function buildReconnectTitle(_status: WsConnectionStatus): string {
-  return "Disconnected from T3 Server";
+  return APP_CONNECTION_COPY.disconnected;
 }
 
 function describeRecoveredToast(
@@ -270,7 +271,7 @@ export function WebSocketConnectionCoordinator() {
               },
               description: describeExhaustedToast(),
               timeout: 0,
-              title: "Disconnected from T3 Server",
+              title: APP_CONNECTION_COPY.disconnected,
               type: "error" as const,
               data: {
                 hideCopyButton: true,
@@ -310,7 +311,7 @@ export function WebSocketConnectionCoordinator() {
     ) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
-        title: "Reconnected to T3 Server",
+        title: APP_CONNECTION_COPY.reconnected,
         type: "success" as const,
         timeout: 0,
         data: {

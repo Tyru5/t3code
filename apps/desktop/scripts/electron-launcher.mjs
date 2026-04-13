@@ -134,7 +134,20 @@ function buildMacLauncher(electronBinaryPath) {
 
 export function resolveElectronPath() {
   const require = createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  let electronBinaryPath;
+
+  try {
+    electronBinaryPath = require("electron");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Electron failed to install correctly")) {
+      throw new Error(
+        "Electron runtime files are missing. Run `bun install` so Bun can execute Electron's trusted postinstall step.",
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
 
   if (process.platform !== "darwin") {
     return electronBinaryPath;

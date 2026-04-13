@@ -3,7 +3,6 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { OpenError, OpenInEditorInput } from "./editor";
-import { AuthAccessStreamEvent } from "./auth";
 import {
   GitActionProgressEvent,
   GitCheckoutInput,
@@ -11,13 +10,13 @@ import {
   GitCommandError,
   GitCreateBranchInput,
   GitCreateBranchResult,
+  GitMergePullRequestInput,
+  GitMergePullRequestResult,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
-  GitMergePullRequestInput,
-  GitMergePullRequestResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -53,6 +52,7 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import { SkillCatalogError, SkillCatalogResult } from "./skills";
 import {
   TerminalClearInput,
   TerminalCloseInput,
@@ -87,6 +87,7 @@ export const WS_METHODS = {
 
   // Git methods
   gitPull: "git.pull",
+  gitMergePullRequest: "git.mergePullRequest",
   gitRefreshStatus: "git.refreshStatus",
   gitRunStackedAction: "git.runStackedAction",
   gitListBranches: "git.listBranches",
@@ -97,7 +98,6 @@ export const WS_METHODS = {
   gitInit: "git.init",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
-  gitMergePullRequest: "git.mergePullRequest",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -109,6 +109,7 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverGetSkillsCatalog: "server.getSkillsCatalog",
   serverRefreshProviders: "server.refreshProviders",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
@@ -119,7 +120,6 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
-  subscribeAuthAccess: "subscribeAuthAccess",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -132,6 +132,12 @@ export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError]),
+});
+
+export const WsServerGetSkillsCatalogRpc = Rpc.make(WS_METHODS.serverGetSkillsCatalog, {
+  payload: Schema.Struct({}),
+  success: SkillCatalogResult,
+  error: SkillCatalogError,
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
@@ -181,6 +187,12 @@ export const WsGitPullRpc = Rpc.make(WS_METHODS.gitPull, {
   error: GitCommandError,
 });
 
+export const WsGitMergePullRequestRpc = Rpc.make(WS_METHODS.gitMergePullRequest, {
+  payload: GitMergePullRequestInput,
+  success: GitMergePullRequestResult,
+  error: GitManagerServiceError,
+});
+
 export const WsGitRefreshStatusRpc = Rpc.make(WS_METHODS.gitRefreshStatus, {
   payload: GitStatusInput,
   success: GitStatusResult,
@@ -203,12 +215,6 @@ export const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequ
 export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
-  error: GitManagerServiceError,
-});
-
-export const WsGitMergePullRequestRpc = Rpc.make(WS_METHODS.gitMergePullRequest, {
-  payload: GitMergePullRequestInput,
-  success: GitMergePullRequestResult,
   error: GitManagerServiceError,
 });
 
@@ -344,14 +350,9 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
-export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
-  payload: Schema.Struct({}),
-  success: AuthAccessStreamEvent,
-  stream: true,
-});
-
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
+  WsServerGetSkillsCatalogRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
@@ -361,11 +362,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
+  WsGitMergePullRequestRpc,
   WsGitRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
-  WsGitMergePullRequestRpc,
   WsGitListBranchesRpc,
   WsGitCreateWorktreeRpc,
   WsGitRemoveWorktreeRpc,

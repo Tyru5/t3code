@@ -574,6 +574,20 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
+function createEmptyActiveThreadSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-empty-thread-target" as MessageId,
+    targetText: "empty thread",
+  });
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID ? Object.assign({}, thread, { messages: [] }) : thread,
+    ),
+  };
+}
+
 function createProjectlessSnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-projectless-target" as MessageId,
@@ -1593,6 +1607,41 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the branded no-active-thread view on the main empty state route", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-main-empty-state-target" as MessageId,
+        targetText: "main empty state",
+      }),
+      initialPath: "/",
+    });
+
+    try {
+      await expect.element(page.getByTestId("no-active-thread-state")).toBeInTheDocument();
+      await expect.element(page.getByTestId("thread-empty-state-logo")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the workflow onboarding hero when a thread has no messages", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createEmptyActiveThreadSnapshot(),
+    });
+
+    try {
+      await expect.element(page.getByTestId("thread-empty-state-workflows")).toBeInTheDocument();
+      await expect
+        .element(page.getByText("Start with the outcome, then shape the plan before the code."))
+        .toBeInTheDocument();
+      await expect.element(page.getByText("Iris workflows")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -4590,7 +4639,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       snapshot: createSnapshotWithPlanFollowUpPrompt({
         modelSelection: { provider: "codex", model: "gpt-5.3-codex-spark" },
         planMarkdown:
-          "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
+          "# Imaginary Long-Range Plan: Iris Adaptive Orchestration and Safe-Delay Execution Initiative",
       }),
     });
 
@@ -4620,7 +4669,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       snapshot: createSnapshotWithPlanFollowUpPrompt({
         modelSelection: { provider: "codex", model: "gpt-5.3-codex-spark" },
         planMarkdown:
-          "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
+          "# Imaginary Long-Range Plan: Iris Adaptive Orchestration and Safe-Delay Execution Initiative",
       }),
     });
 

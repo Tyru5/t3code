@@ -1,8 +1,9 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import { parsePromptSkillPrefix } from "./promptSkillPrefix";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "skills";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -11,11 +12,12 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "skills"];
 const isInlineTokenSegment = (
   segment:
+    | { type: "skill" }
     | { type: "text"; text: string }
     | { type: "mention" }
-    | { type: "skill" }
     | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
 
@@ -42,6 +44,48 @@ function tokenStartForCursor(text: string, cursor: number): number {
   return index + 1;
 }
 
+function detectSlashTriggerInLeadingSkillPrefix(
+  text: string,
+  cursor: number,
+): ComposerTrigger | null {
+  const prefixState = parsePromptSkillPrefix(text);
+  const prefixStart = prefixState.bodyStart;
+  const prefixText = text.slice(prefixStart, cursor);
+  if (!prefixText.startsWith("/")) {
+    return null;
+  }
+
+  const commandMatch = /^\/(\S*)$/.exec(prefixText);
+  if (commandMatch) {
+    const commandQuery = commandMatch[1] ?? "";
+    if (commandQuery.toLowerCase() === "model") {
+      return {
+        kind: "slash-model",
+        query: "",
+        rangeStart: prefixStart,
+        rangeEnd: cursor,
+      };
+    }
+    return {
+      kind: "slash-command",
+      query: commandQuery,
+      rangeStart: prefixStart,
+      rangeEnd: cursor,
+    };
+  }
+
+  const modelMatch = /^\/model(?:\s+(.*))?$/.exec(prefixText);
+  if (!modelMatch) {
+    return null;
+  }
+  return {
+    kind: "slash-model",
+    query: (modelMatch[1] ?? "").trim(),
+    rangeStart: prefixStart,
+    rangeEnd: cursor,
+  };
+}
+
 export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
   const collapsedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
@@ -53,8 +97,8 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   let expandedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention") {
-      const expandedLength = segment.path.length + 1;
+    if (segment.type === "skill") {
+      const expandedLength = segment.skillName.length + 1;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
       }
@@ -62,8 +106,8 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
       expandedCursor += expandedLength;
       continue;
     }
-    if (segment.type === "skill") {
-      const expandedLength = segment.name.length + 1;
+    if (segment.type === "mention") {
+      const expandedLength = segment.path.length + 1;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
       }
@@ -93,9 +137,9 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
 
 function collapsedSegmentLength(
   segment:
+    | { type: "skill" }
     | { type: "text"; text: string }
     | { type: "mention" }
-    | { type: "skill" }
     | { type: "terminal-context" },
 ): number {
   if (segment.type === "text") {
@@ -106,9 +150,9 @@ function collapsedSegmentLength(
 
 function clampCollapsedComposerCursorForSegments(
   segments: ReadonlyArray<
+    | { type: "skill" }
     | { type: "text"; text: string }
     | { type: "mention" }
-    | { type: "skill" }
     | { type: "terminal-context" }
   >,
   cursorInput: number,
@@ -141,8 +185,8 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
   let collapsedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention") {
-      const expandedLength = segment.path.length + 1;
+    if (segment.type === "skill") {
+      const expandedLength = segment.skillName.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }
@@ -153,8 +197,8 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
       collapsedCursor += 1;
       continue;
     }
-    if (segment.type === "skill") {
-      const expandedLength = segment.name.length + 1;
+    if (segment.type === "mention") {
+      const expandedLength = segment.path.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }
@@ -217,6 +261,11 @@ export const isCollapsedCursorAdjacentToMention = isCollapsedCursorAdjacentToInl
 
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
+  const skillPrefixTrigger = detectSlashTriggerInLeadingSkillPrefix(text, cursor);
+  if (skillPrefixTrigger) {
+    return skillPrefixTrigger;
+  }
+
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
 
@@ -232,12 +281,15 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
           rangeEnd: cursor,
         };
       }
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
+      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
+        return {
+          kind: "slash-command",
+          query: commandQuery,
+          rangeStart: lineStart,
+          rangeEnd: cursor,
+        };
+      }
+      return null;
     }
 
     const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
@@ -276,12 +328,13 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): Exclude<ComposerSlashCommand, "model"> | null {
-  const match = /^\/(plan|default)\s*$/i.exec(text.trim());
+  const match = /^\/(plan|default|skills)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
+  if (command === "skills") return "skills";
   return "default";
 }
 

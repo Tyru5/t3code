@@ -24,6 +24,14 @@ const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  getWsUrl: () => {
+    const bootstrap = ipcRenderer.sendSync(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
+    if (typeof bootstrap !== "object" || bootstrap === null) {
+      return null;
+    }
+    const wsBaseUrl = (bootstrap as { readonly wsBaseUrl?: unknown }).wsBaseUrl;
+    return typeof wsBaseUrl === "string" && wsBaseUrl.length > 0 ? wsBaseUrl : null;
+  },
   getLocalEnvironmentBootstrap: () => {
     const result = ipcRenderer.sendSync(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
     if (typeof result !== "object" || result === null) {
