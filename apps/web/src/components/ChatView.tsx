@@ -220,6 +220,7 @@ import {
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { retainThreadDetailSubscription } from "../environments/runtime/service";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -951,6 +952,64 @@ export default function ChatView({
     () => (activeProject ? scopeProjectRef(activeProject.environmentId, activeProject.id) : null),
     [activeProject],
   );
+
+  useEffect(() => {
+    if (routeKind !== "server") {
+      return;
+    }
+    return retainThreadDetailSubscription(environmentId, threadId);
+  }, [environmentId, routeKind, threadId]);
+
+  // Compute the list of environments this logical project spans, used to
+  // drive the environment picker in BranchToolbar.
+  const allProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
+  const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
+  const logicalProjectEnvironments = useMemo(() => {
+    if (!activeProject) return [];
+    const logicalKey = deriveLogicalProjectKey(activeProject);
+    const memberProjects = allProjects.filter((p) => deriveLogicalProjectKey(p) === logicalKey);
+    const seen = new Set<string>();
+    const envs: Array<{
+      environmentId: EnvironmentId;
+      projectId: ProjectId;
+      label: string;
+      isPrimary: boolean;
+    }> = [];
+    for (const p of memberProjects) {
+      if (seen.has(p.environmentId)) continue;
+      seen.add(p.environmentId);
+      const isPrimary = p.environmentId === primaryEnvironmentId;
+      const savedRecord = savedEnvironmentRegistry[p.environmentId];
+      const runtimeState = savedEnvironmentRuntimeById[p.environmentId];
+      const label = resolveEnvironmentOptionLabel({
+        isPrimary,
+        environmentId: p.environmentId,
+        runtimeLabel: runtimeState?.descriptor?.label ?? null,
+        savedLabel: savedRecord?.label ?? null,
+      });
+      envs.push({
+        environmentId: p.environmentId,
+        projectId: p.id,
+        label,
+        isPrimary,
+      });
+    }
+    // Sort: primary first, then alphabetical
+    envs.sort((a, b) => {
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      return a.label.localeCompare(b.label);
+    });
+    return envs;
+  }, [
+    activeProject,
+    allProjects,
+    primaryEnvironmentId,
+    savedEnvironmentRegistry,
+    savedEnvironmentRuntimeById,
+  ]);
+  const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
