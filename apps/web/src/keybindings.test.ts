@@ -102,6 +102,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("b"),
+    command: "sidebar.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("k"),
     command: "commandPalette.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -128,6 +133,18 @@ describe("isTerminalToggleShortcut", () => {
   it("matches Ctrl+J on non-macOS", () => {
     assert.isTrue(
       isTerminalToggleShortcut(event({ ctrlKey: true }), DEFAULT_BINDINGS, { platform: "Win32" }),
+    );
+  });
+});
+
+describe("resolveShortcutCommand", () => {
+  it("matches sidebar.toggle", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "b", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "sidebar.toggle",
     );
   });
 });

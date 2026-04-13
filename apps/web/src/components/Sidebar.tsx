@@ -123,6 +123,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
+  useSidebar,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
@@ -2449,6 +2450,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 });
 
 export default function Sidebar() {
+  const { toggleSidebar } = useSidebar();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const sidebarThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const activeEnvironmentId = useStore((store) => store.activeEnvironmentId);
@@ -3045,6 +3047,12 @@ export default function Sidebar() {
         platform,
         context: shortcutContext,
       });
+      if (command === "sidebar.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSidebar();
+        return;
+      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
@@ -3133,6 +3141,7 @@ export default function Sidebar() {
     sidebarThreadByKey,
     threadJumpCommandByKey,
     threadJumpThreadKeys,
+    toggleSidebar,
     updateThreadJumpHintsVisibility,
   ]);
 
