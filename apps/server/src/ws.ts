@@ -1,5 +1,7 @@
-import { Cause, Duration, Effect, Layer, Queue, Ref, Schema, Stream } from "effect";
+import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
 import {
+  type AuthAccessStreamEvent,
+  AuthSessionId,
   CommandId,
   EventId,
   type OrchestrationCommand,
@@ -7,6 +9,7 @@ import {
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
+  type OrchestrationShellStreamEvent,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -20,7 +23,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
@@ -47,33 +50,116 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver";
 import { SkillCatalog } from "./skills/Services/SkillCatalog";
 import { ServerAuth } from "./auth/Services/ServerAuth";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
+import {
+  BootstrapCredentialService,
+  type BootstrapCredentialChange,
+} from "./auth/Services/BootstrapCredentialService";
+import {
+  SessionCredentialService,
+  type SessionCredentialChange,
+} from "./auth/Services/SessionCredentialService";
+import { respondToAuthError } from "./auth/http";
 
-const WsRpcLayer = WsRpcGroup.toLayer(
-  Effect.gen(function* () {
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const orchestrationEngine = yield* OrchestrationEngineService;
-    const checkpointDiffQuery = yield* CheckpointDiffQuery;
-    const keybindings = yield* Keybindings;
-    const open = yield* Open;
-    const gitManager = yield* GitManager;
-    const git = yield* GitCore;
-    const gitStatusBroadcaster = yield* GitStatusBroadcaster;
-    const terminalManager = yield* TerminalManager;
-    const providerRegistry = yield* ProviderRegistry;
-    const config = yield* ServerConfig;
-    const lifecycleEvents = yield* ServerLifecycleEvents;
-    const serverSettings = yield* ServerSettingsService;
-    const startup = yield* ServerRuntimeStartup;
-    const workspaceEntries = yield* WorkspaceEntries;
-    const workspaceFileSystem = yield* WorkspaceFileSystem;
-    const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
-    const skillCatalog = yield* SkillCatalog;
-    const serverAuth = yield* ServerAuth;
-    const serverEnvironment = yield* ServerEnvironment;
-    const serverCommandId = (tag: string) => CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
+  OrchestrationEvent,
+  {
+    type:
+      | "thread.message-sent"
+      | "thread.proposed-plan-upserted"
+      | "thread.activity-appended"
+      | "thread.turn-diff-completed"
+      | "thread.reverted"
+      | "thread.session-set";
+  }
+> {
+  return (
+    event.type === "thread.message-sent" ||
+    event.type === "thread.proposed-plan-upserted" ||
+    event.type === "thread.activity-appended" ||
+    event.type === "thread.turn-diff-completed" ||
+    event.type === "thread.reverted" ||
+    event.type === "thread.session-set"
+  );
+}
+
+function toAuthAccessStreamEvent(
+  change: BootstrapCredentialChange | SessionCredentialChange,
+  revision: number,
+  currentSessionId: AuthSessionId,
+): AuthAccessStreamEvent {
+  switch (change.type) {
+    case "pairingLinkUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "pairingLinkUpserted",
+        payload: change.pairingLink,
+      };
+    case "pairingLinkRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "pairingLinkRemoved",
+        payload: { id: change.id },
+      };
+    case "clientUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "clientUpserted",
+        payload: {
+          ...change.clientSession,
+          current: change.clientSession.sessionId === currentSessionId,
+        },
+      };
+    case "clientRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "clientRemoved",
+        payload: { sessionId: change.sessionId },
+      };
+  }
+}
+
+const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
+  WsRpcGroup.toLayer(
+    Effect.gen(function* () {
+      const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+      const orchestrationEngine = yield* OrchestrationEngineService;
+      const checkpointDiffQuery = yield* CheckpointDiffQuery;
+      const keybindings = yield* Keybindings;
+      const open = yield* Open;
+      const gitManager = yield* GitManager;
+      const git = yield* GitCore;
+      const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+      const terminalManager = yield* TerminalManager;
+      const providerRegistry = yield* ProviderRegistry;
+      const config = yield* ServerConfig;
+      const lifecycleEvents = yield* ServerLifecycleEvents;
+      const serverSettings = yield* ServerSettingsService;
+      const startup = yield* ServerRuntimeStartup;
+      const workspaceEntries = yield* WorkspaceEntries;
+      const workspaceFileSystem = yield* WorkspaceFileSystem;
+      const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+      const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
+      const skillCatalog = yield* SkillCatalog;
+      const serverEnvironment = yield* ServerEnvironment;
+      const serverAuth = yield* ServerAuth;
+      const bootstrapCredentials = yield* BootstrapCredentialService;
+      const sessions = yield* SessionCredentialService;
+      const serverCommandId = (tag: string) =>
+        CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+
+      const loadAuthAccessSnapshot = () =>
+        Effect.all({
+          pairingLinks: serverAuth.listPairingLinks().pipe(Effect.orDie),
+          clientSessions: serverAuth.listClientSessions(currentSessionId).pipe(Effect.orDie),
+        });
 
     const appendSetupScriptActivity = (input: {
       readonly threadId: ThreadId;
@@ -787,34 +873,69 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           }),
           { "rpc.aggregate": "server" },
         ),
+      [WS_METHODS.subscribeAuthAccess]: (_input) =>
+        observeRpcStreamEffect(
+          WS_METHODS.subscribeAuthAccess,
+          Effect.gen(function* () {
+            const initialSnapshot = yield* loadAuthAccessSnapshot();
+            const revisionRef = yield* Ref.make(1);
+            const accessChanges: Stream.Stream<
+              BootstrapCredentialChange | SessionCredentialChange
+            > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
+
+            const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
+              Stream.mapEffect((change) =>
+                Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
+                  Effect.map((revision) =>
+                    toAuthAccessStreamEvent(change, revision, currentSessionId),
+                  ),
+                ),
+              ),
+            );
+
+            return Stream.concat(
+              Stream.make({
+                version: 1 as const,
+                revision: 1,
+                type: "snapshot" as const,
+                payload: initialSnapshot,
+              }),
+              liveEvents,
+            );
+          }),
+          { "rpc.aggregate": "auth" },
+        ),
     });
   }),
 );
 
 export const websocketRpcRouteLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
-      spanPrefix: "ws.rpc",
-      spanAttributes: {
-        "rpc.transport": "websocket",
-        "rpc.system": "effect-rpc",
-      },
-    }).pipe(Effect.provide(Layer.mergeAll(WsRpcLayer, RpcSerialization.layerJson)));
-    return HttpRouter.add(
+  Effect.succeed(
+    HttpRouter.add(
       "GET",
       "/ws",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* ServerAuth;
-        yield* serverAuth
-          .authenticateWebSocketUpgrade(request)
-          .pipe(
-            Effect.mapError(() =>
-              HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 }),
-            ),
-          );
-        return yield* rpcWebSocketHttpEffect;
-      }),
-    );
-  }),
+        const sessions = yield* SessionCredentialService;
+        const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
+        const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+          spanPrefix: "ws.rpc",
+          spanAttributes: {
+            "rpc.transport": "websocket",
+            "rpc.system": "effect-rpc",
+          },
+        }).pipe(
+          Effect.provide(
+            makeWsRpcLayer(session.sessionId).pipe(Layer.provideMerge(RpcSerialization.layerJson)),
+          ),
+        );
+        return yield* Effect.acquireUseRelease(
+          sessions.markConnected(session.sessionId),
+          () => rpcWebSocketHttpEffect,
+          () => sessions.markDisconnected(session.sessionId),
+        );
+      }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+    ),
+  ),
 );
