@@ -18,22 +18,7 @@ export function NoActiveThreadState() {
               ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
               : "py-2 sm:py-3",
           )}
-        >
-          {isElectron ? (
-            <span className="inline-flex items-center gap-2 text-xs text-muted-foreground/56 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
-              <TerminalSquareIcon className="size-3.5 text-muted-foreground/48" />
-              <span>No active thread</span>
-            </span>
-          ) : (
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-              <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground md:text-muted-foreground/60">
-                <TerminalSquareIcon className="size-3.5 text-muted-foreground/56" />
-                No active thread
-              </span>
-            </div>
-          )}
-        </header>
+        ></header>
 
         <ThreadEmptyState variant="logo" className="flex-1" />
       </div>

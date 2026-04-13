@@ -50,6 +50,7 @@ import { MessagesTimeline } from "./MessagesTimeline";
 
 function buildProps() {
   return {
+    hasMessages: false,
     isWorking: false,
     activeTurnInProgress: false,
     activeTurnId: null,
@@ -85,6 +86,7 @@ describe("MessagesTimeline", () => {
     const screen = await render(
       <MessagesTimeline
         {...buildProps()}
+        hasMessages
         timelineEntries={[
           {
             id: "work-1",
@@ -132,6 +134,7 @@ describe("MessagesTimeline", () => {
       await screen.rerender(
         <MessagesTimeline
           {...props}
+          hasMessages
           timelineEntries={[
             {
               id: "work-1",

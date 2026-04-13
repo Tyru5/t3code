@@ -112,6 +112,42 @@ const COMPACT_FOOTER_VIEWPORT: ViewportSpec = {
   textTolerancePx: 56,
   attachmentTolerancePx: 56,
 };
+const CODEX_PICKER_TEST_MODELS: ServerConfig["providers"][number]["models"] = [
+  {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "medium", label: "Medium" },
+        { value: "low", label: "Low" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+  {
+    slug: "gpt-5.4-mini",
+    name: "GPT-5.4 Mini",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "medium", label: "Medium" },
+        { value: "low", label: "Low" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+];
 
 interface MountedChatView {
   [Symbol.asyncDispose]: () => Promise<void>;
@@ -1250,6 +1286,14 @@ async function waitForSendButton(): Promise<HTMLButtonElement> {
 
 function findComposerProviderModelPicker(): HTMLButtonElement | null {
   return document.querySelector<HTMLButtonElement>('[data-chat-provider-model-picker="true"]');
+}
+
+function findMenuSlotContainingText(slot: string, text: string): HTMLElement | null {
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>(`[data-slot="${slot}"]`)).find((element) =>
+      element.textContent?.includes(text),
+    ) ?? null
+  );
 }
 
 function findButtonByText(text: string): HTMLButtonElement | null {
@@ -3981,6 +4025,100 @@ describe("ChatView timeline estimator parity (full app)", () => {
         mounted.router,
         (path) => UUID_ROUTE_RE.test(path),
         "Route should have changed to a new draft thread UUID from the shortcut.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("updates the draft composer model picker after selecting a different model", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-draft-model-picker-target" as MessageId,
+      targetText: "draft model picker target",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      projects: baseSnapshot.projects.map((project) =>
+        project.id === PROJECT_ID
+          ? Object.assign({}, project, {
+              defaultModelSelection: {
+                provider: "codex",
+                model: "gpt-5.4",
+              },
+            })
+          : project,
+      ),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureFixture: (nextFixture) => {
+        const provider = nextFixture.serverConfig.providers[0];
+        if (!provider) {
+          throw new Error("Expected default provider in test fixture.");
+        }
+        (
+          provider as {
+            models: ServerConfig["providers"][number]["models"];
+          }
+        ).models = CODEX_PICKER_TEST_MODELS;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const threadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a sticky draft thread UUID.",
+      );
+      const draftId = draftIdFromPath(threadPath);
+
+      await vi.waitFor(
+        () => {
+          expect(findComposerProviderModelPicker()?.textContent).toContain("GPT-5.4");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const modelPicker = await waitForElement(
+        findComposerProviderModelPicker,
+        "Unable to find provider model picker.",
+      );
+      modelPicker.click();
+
+      const codexSubTrigger = await waitForElement(
+        () => findMenuSlotContainingText("menu-sub-trigger", "Codex"),
+        "Unable to find the Codex model submenu.",
+      );
+      codexSubTrigger.click();
+
+      const miniModelItem = await waitForElement(
+        () => findMenuSlotContainingText("menu-radio-item", "GPT-5.4 Mini"),
+        "Unable to find the GPT-5.4 Mini menu item.",
+      );
+      miniModelItem.click();
+
+      await vi.waitFor(
+        () => {
+          expect(composerDraftFor(draftId)).toMatchObject({
+            modelSelectionByProvider: {
+              codex: {
+                provider: "codex",
+                model: "gpt-5.4-mini",
+              },
+            },
+            activeProvider: "codex",
+          });
+          expect(findComposerProviderModelPicker()?.textContent).toContain("GPT-5.4 Mini");
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
