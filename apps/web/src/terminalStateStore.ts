@@ -556,6 +556,33 @@ export function selectThreadTerminalState(
   return terminalStateByThreadKey[terminalThreadKey(threadRef)] ?? getDefaultThreadTerminalState();
 }
 
+export function selectThreadTerminalLaunchContext(
+  terminalLaunchContextByThreadKey: Record<string, ThreadTerminalLaunchContext>,
+  threadRef: ScopedThreadRef | ThreadId | null | undefined,
+): ThreadTerminalLaunchContext | null {
+  if (!threadRef) {
+    return null;
+  }
+  if (typeof threadRef === "string") {
+    if (threadRef.length === 0) {
+      return null;
+    }
+    const directContext = terminalLaunchContextByThreadKey[threadRef];
+    if (directContext) {
+      return directContext;
+    }
+    const matchedEntry = Object.entries(terminalLaunchContextByThreadKey).find(([threadKey]) => {
+      const parsed = parseScopedThreadKey(threadKey);
+      return parsed?.threadId === threadRef;
+    });
+    return matchedEntry?.[1] ?? null;
+  }
+  if (threadRef.threadId.length === 0) {
+    return null;
+  }
+  return terminalLaunchContextByThreadKey[terminalThreadKey(threadRef)] ?? null;
+}
+
 function updateTerminalStateByThreadKey(
   terminalStateByThreadKey: Record<string, ThreadTerminalState>,
   threadRef: TerminalThreadRef,
