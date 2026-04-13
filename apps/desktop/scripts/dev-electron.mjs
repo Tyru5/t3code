@@ -59,6 +59,17 @@ function cleanupStaleDevApps() {
     return;
   }
 
+  // Kill stale dev-electron.mjs watchers (excluding ourselves) so they don't
+  // respawn Electron when the bundle rebuilds.
+  spawnSync(
+    "bash",
+    [
+      "-c",
+      `pgrep -f 'dev-electron\\.mjs' | grep -v "^${process.pid}$" | while read pid; do kill -9 "$pid" 2>/dev/null; done`,
+    ],
+    { stdio: "ignore" },
+  );
+
   spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], { stdio: "ignore" });
 }
 

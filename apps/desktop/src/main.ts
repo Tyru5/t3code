@@ -1969,26 +1969,10 @@ async function bootstrap(): Promise<void> {
   startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
 
-  if (isDevelopment) {
-    mainWindow = createWindow();
-    writeDesktopLogHeader("bootstrap main window created");
-    void waitForBackendHttpReady(backendHttpUrl)
-      .then(() => {
-        writeDesktopLogHeader("bootstrap backend ready");
-      })
-      .catch((error) => {
-        if (isBackendReadinessAborted(error)) {
-          return;
-        }
-        writeDesktopLogHeader(
-          `bootstrap backend readiness warning message=${formatErrorMessage(error)}`,
-        );
-        console.warn("[desktop] backend readiness check timed out during dev bootstrap", error);
-      });
-    return;
-  }
-
-  ensureInitialBackendWindowOpen();
+  await waitForBackendHttpReady(backendHttpUrl);
+  writeDesktopLogHeader("bootstrap backend ready");
+  mainWindow = createWindow();
+  writeDesktopLogHeader("bootstrap main window created");
 }
 
 app.on("before-quit", () => {
