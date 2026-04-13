@@ -22,7 +22,7 @@ import {
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
@@ -75,7 +75,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
-import { useProjectById, useThreadById } from "../storeSelectors";
+import { createThreadSelectorByRef, useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
   buildPlanImplementationThreadTitle,
@@ -640,7 +640,7 @@ export default function ChatView({
     select: (params) => parseDiffRouteSearch(params),
   });
   const { resolvedTheme } = useTheme();
-  const composerDraft = useComposerThreadDraft(threadId);
+  const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
@@ -691,8 +691,12 @@ export default function ChatView({
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
-  const draftThread = useComposerDraftStore(
-    (store) => store.draftThreadsByThreadId[threadId] ?? null,
+  const draftThread = useComposerDraftStore((store) =>
+    routeKind === "server"
+      ? store.getDraftSessionByRef(routeThreadRef)
+      : draftId
+        ? store.getDraftSession(draftId)
+        : null,
   );
   const promptRef = useRef(prompt);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -823,33 +827,33 @@ export default function ChatView({
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
-      setComposerDraftPrompt(threadId, nextPrompt);
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     },
-    [setComposerDraftPrompt, threadId],
+    [composerDraftTarget, setComposerDraftPrompt],
   );
   const addComposerImage = useCallback(
     (image: ComposerImageAttachment) => {
-      addComposerDraftImage(threadId, image);
+      addComposerDraftImage(composerDraftTarget, image);
     },
-    [addComposerDraftImage, threadId],
+    [addComposerDraftImage, composerDraftTarget],
   );
   const addComposerImagesToDraft = useCallback(
     (images: ComposerImageAttachment[]) => {
-      addComposerDraftImages(threadId, images);
+      addComposerDraftImages(composerDraftTarget, images);
     },
-    [addComposerDraftImages, threadId],
+    [addComposerDraftImages, composerDraftTarget],
   );
   const addComposerTerminalContextsToDraft = useCallback(
     (contexts: TerminalContextDraft[]) => {
-      addComposerDraftTerminalContexts(threadId, contexts);
+      addComposerDraftTerminalContexts(composerDraftTarget, contexts);
     },
-    [addComposerDraftTerminalContexts, threadId],
+    [addComposerDraftTerminalContexts, composerDraftTarget],
   );
   const removeComposerImageFromDraft = useCallback(
     (imageId: string) => {
-      removeComposerDraftImage(threadId, imageId);
+      removeComposerDraftImage(composerDraftTarget, imageId);
     },
-    [removeComposerDraftImage, threadId],
+    [composerDraftTarget, removeComposerDraftImage],
   );
   const removeComposerTerminalContextFromDraft = useCallback(
     (contextId: string) => {
@@ -862,7 +866,7 @@ export default function ChatView({
       const nextPrompt = removeInlineTerminalContextPlaceholder(promptRef.current, contextIndex);
       promptRef.current = nextPrompt.prompt;
       setPrompt(nextPrompt.prompt);
-      removeComposerDraftTerminalContext(threadId, contextId);
+      removeComposerDraftTerminalContext(composerDraftTarget, contextId);
       setComposerCursor(nextPrompt.cursor);
       setComposerTrigger(
         detectComposerTrigger(
@@ -871,11 +875,15 @@ export default function ChatView({
         ),
       );
     },
-    [composerTerminalContexts, removeComposerDraftTerminalContext, setPrompt, threadId],
+    [composerDraftTarget, composerTerminalContexts, removeComposerDraftTerminalContext, setPrompt],
   );
 
   const fallbackDraftProject = useProjectById(draftThread?.projectId);
-  const localDraftError = serverThread ? null : (localDraftErrorsByThreadId[threadId] ?? null);
+  const localDraftErrorKey = draftId ?? threadId;
+  const localDraftError =
+    routeKind === "server" && serverThread
+      ? null
+      : (localDraftErrorsByThreadId[localDraftErrorKey] ?? null);
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -891,12 +899,12 @@ export default function ChatView({
         : undefined,
     [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
   );
-  const activeThread = serverThread ?? localDraftThread;
+  const isServerThread = routeKind === "server" && serverThread !== undefined;
+  const activeThread = isServerThread ? serverThread : localDraftThread;
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
-  const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
@@ -1116,12 +1124,13 @@ export default function ChatView({
     const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
     if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
 
-    markThreadVisited(serverThread.id);
+    markThreadVisited(routeThreadKey);
   }, [
     activeLatestTurn?.completedAt,
     activeThreadLastVisitedAt,
     latestTurnSettled,
     markThreadVisited,
+    routeThreadKey,
     serverThread?.id,
   ]);
 
@@ -1853,7 +1862,7 @@ export default function ChatView({
         insertion.cursor,
       );
       const inserted = insertComposerDraftTerminalContext(
-        activeThread.id,
+        composerDraftTarget,
         insertion.prompt,
         {
           id: randomUUID(),
@@ -1873,7 +1882,13 @@ export default function ChatView({
         composerEditorRef.current?.focusAt(nextCollapsedCursor);
       });
     },
-    [activeThread, composerCursor, composerTerminalContexts, insertComposerDraftTerminalContext],
+    [
+      activeThread,
+      composerCursor,
+      composerDraftTarget,
+      composerTerminalContexts,
+      insertComposerDraftTerminalContext,
+    ],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -2160,9 +2175,9 @@ export default function ChatView({
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
       if (mode === runtimeMode) return;
-      setComposerDraftRuntimeMode(threadId, mode);
+      setComposerDraftRuntimeMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
-        setDraftThreadContext(threadId, { runtimeMode: mode });
+        setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
       scheduleComposerFocus();
     },
@@ -2170,18 +2185,18 @@ export default function ChatView({
       isLocalDraftThread,
       runtimeMode,
       scheduleComposerFocus,
+      composerDraftTarget,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
-      threadId,
     ],
   );
 
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
       if (mode === interactionMode) return;
-      setComposerDraftInteractionMode(threadId, mode);
+      setComposerDraftInteractionMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
-        setDraftThreadContext(threadId, { interactionMode: mode });
+        setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
       }
       scheduleComposerFocus();
     },
@@ -2189,9 +2204,9 @@ export default function ChatView({
       interactionMode,
       isLocalDraftThread,
       scheduleComposerFocus,
+      composerDraftTarget,
       setComposerDraftInteractionMode,
       setDraftThreadContext,
-      threadId,
     ],
   );
   const refreshSkillsCatalogCard = useCallback(async () => {
@@ -2698,11 +2713,12 @@ export default function ChatView({
     let cancelled = false;
     void (async () => {
       if (composerImages.length === 0) {
-        clearComposerDraftPersistedAttachments(threadId);
+        clearComposerDraftPersistedAttachments(composerDraftTarget);
         return;
       }
       const getPersistedAttachmentsForThread = () =>
-        useComposerDraftStore.getState().draftsByThreadId[threadId]?.persistedAttachments ?? [];
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+          ?.persistedAttachments ?? [];
       try {
         const currentPersistedAttachments = getPersistedAttachmentsForThread();
         const existingPersistedById = new Map(
@@ -2733,7 +2749,7 @@ export default function ChatView({
           return;
         }
         // Stage attachments in persisted draft state first so persist middleware can write them.
-        syncComposerDraftPersistedAttachments(threadId, serialized);
+        syncComposerDraftPersistedAttachments(composerDraftTarget, serialized);
       } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
         const fallbackPersistedAttachments = getPersistedAttachmentsForThread();
@@ -2747,7 +2763,7 @@ export default function ChatView({
         if (cancelled) {
           return;
         }
-        syncComposerDraftPersistedAttachments(threadId, fallbackAttachments);
+        syncComposerDraftPersistedAttachments(composerDraftTarget, fallbackAttachments);
       }
     })();
     return () => {
@@ -2755,9 +2771,9 @@ export default function ChatView({
     };
   }, [
     clearComposerDraftPersistedAttachments,
+    composerDraftTarget,
     composerImages,
     syncComposerDraftPersistedAttachments,
-    threadId,
   ]);
 
   const closeExpandedImage = useCallback(() => {
@@ -3203,7 +3219,7 @@ export default function ChatView({
         planMarkdown: activeProposedPlan.planMarkdown,
       });
       promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
+      clearComposerDraftContent(composerDraftTarget);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
@@ -3219,7 +3235,7 @@ export default function ChatView({
         : null;
     if (standaloneSlashCommand) {
       promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
+      clearComposerDraftContent(composerDraftTarget);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
@@ -3320,7 +3336,7 @@ export default function ChatView({
       });
     }
     promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
+    clearComposerDraftContent(composerDraftTarget);
     setComposerHighlightedItemId(null);
     setComposerCursor(0);
     setComposerTrigger(null);
@@ -3682,7 +3698,7 @@ export default function ChatView({
 
         // Keep the mode toggle and plan-follow-up banner in sync immediately
         // while the same-thread implementation turn is starting.
-        setComposerDraftInteractionMode(threadIdForSend, nextInteractionMode);
+        setComposerDraftInteractionMode(composerDraftTarget, nextInteractionMode);
 
         await api.orchestration.dispatchCommand({
           type: "thread.turn.start",
@@ -3733,6 +3749,7 @@ export default function ChatView({
       activeProposedPlan,
       beginLocalDispatch,
       forceStickToBottom,
+      composerDraftTarget,
       isConnecting,
       isSendBusy,
       isServerThread,
@@ -3888,12 +3905,13 @@ export default function ChatView({
         provider: resolvedProvider,
         model: resolvedModel,
       };
-      setComposerDraftModelSelection(activeThread.id, nextModelSelection);
+      setComposerDraftModelSelection(composerDraftTarget, nextModelSelection);
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
     },
     [
       activeThread,
+      composerDraftTarget,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
@@ -4266,7 +4284,7 @@ export default function ChatView({
       setPrompt(nextPrompt);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
         setComposerDraftTerminalContexts(
-          threadId,
+          composerDraftTarget,
           syncTerminalContextsByIds(composerTerminalContexts, terminalContextIds),
         );
       }
@@ -4279,10 +4297,10 @@ export default function ChatView({
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       composerTerminalContexts,
+      composerDraftTarget,
       onChangeActivePendingUserInputCustomAnswer,
       setPrompt,
       setComposerDraftTerminalContexts,
-      threadId,
     ],
   );
 

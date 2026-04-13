@@ -5112,6 +5112,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const draftThread = useComposerDraftStore.getState().getDraftSession(nextDraftId);
       expect(draftThread?.projectId).toBe(SECOND_PROJECT_ID);
       expect(draftThread?.envMode).toBe("worktree");
+      await waitForComposerEditor();
     } finally {
       await mounted.cleanup();
     }
