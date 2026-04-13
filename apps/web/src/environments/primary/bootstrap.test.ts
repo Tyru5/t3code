@@ -167,4 +167,26 @@ describe("environmentBootstrap", () => {
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/.well-known/t3/environment");
   });
+
+  it("uses the current origin for desktop-managed loopback descriptor requests when the dev server url is unset", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(BASE_ENVIRONMENT));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", {
+      location: new URL("http://127.0.0.1:5733/"),
+      history: {
+        replaceState: vi.fn(),
+      },
+      desktopBridge: {
+        getLocalEnvironmentBootstrap: () => ({
+          label: "Local environment",
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        }),
+      },
+    });
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/.well-known/t3/environment");
+  });
 });
