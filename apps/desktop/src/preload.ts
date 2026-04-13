@@ -33,6 +33,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getWsUrl: () => {
+    const bootstrap = ipcRenderer.sendSync(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
+    if (typeof bootstrap !== "object" || bootstrap === null) {
+      return null;
+    }
+    const wsBaseUrl = (bootstrap as { readonly wsBaseUrl?: unknown }).wsBaseUrl;
+    return typeof wsBaseUrl === "string" && wsBaseUrl.length > 0 ? wsBaseUrl : null;
+  },
   getLocalEnvironmentBootstrap: () => {
     const result = ipcRenderer.sendSync(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
     if (typeof result !== "object" || result === null) {

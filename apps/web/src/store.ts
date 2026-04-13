@@ -1924,6 +1924,8 @@ export function setThreadBranch(
 }
 
 interface AppStore extends AppState {
+  readonly projects: Project[];
+  readonly threads: Thread[];
   setActiveEnvironmentId: (environmentId: EnvironmentId) => void;
   syncServerShellSnapshot: (
     snapshot: OrchestrationShellSnapshot,
@@ -1946,6 +1948,12 @@ interface AppStore extends AppState {
 
 export const useStore = create<AppStore>((set) => ({
   ...initialState,
+  get projects() {
+    return selectProjectsAcrossEnvironments(this);
+  },
+  get threads() {
+    return selectThreadsAcrossEnvironments(this);
+  },
   setActiveEnvironmentId: (environmentId) =>
     set((state) => setActiveEnvironmentId(state, environmentId)),
   syncServerShellSnapshot: (snapshot, environmentId) =>

@@ -99,6 +99,7 @@ import {
   ServerEnvironment,
   type ServerEnvironmentShape,
 } from "./environment/Services/ServerEnvironment.ts";
+import { SkillCatalog, type SkillCatalogShape } from "./skills/Services/SkillCatalog.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -308,6 +309,7 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    skillCatalog?: Partial<SkillCatalogShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -491,6 +493,15 @@ const buildAppUnderTest = (options?: {
         Layer.mock(RepositoryIdentityResolver)({
           resolve: () => Effect.succeed(null),
           ...options?.layers?.repositoryIdentityResolver,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SkillCatalog)({
+          getCatalog: Effect.succeed({
+            entries: [],
+            warnings: [],
+          }),
+          ...options?.layers?.skillCatalog,
         }),
       ),
       Layer.provideMerge(authTestLayer),

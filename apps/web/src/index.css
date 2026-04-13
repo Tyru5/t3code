@@ -31,6 +31,11 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -49,12 +54,8 @@
   * {
     @apply border-border outline-ring/50;
   }
-  html {
-    background-color: var(--app-chrome-background);
-  }
   body {
-    @apply text-foreground relative;
-    background-color: var(--app-chrome-background);
+    @apply bg-background text-foreground relative;
   }
 }
 
@@ -70,61 +71,69 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
-  --background: var(--color-white);
-  --app-chrome-background: var(--background);
-  --foreground: var(--color-neutral-800);
-  --card: var(--color-white);
-  --card-foreground: var(--color-neutral-800);
-  --popover: var(--color-white);
-  --popover-foreground: var(--color-neutral-800);
-  --primary: oklch(0.488 0.217 264);
-  --primary-foreground: var(--color-white);
-  --secondary: --alpha(var(--color-black) / 4%);
-  --secondary-foreground: var(--color-neutral-800);
-  --muted: --alpha(var(--color-black) / 4%);
-  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
-  --accent: --alpha(var(--color-black) / 4%);
-  --accent-foreground: var(--color-neutral-800);
-  --destructive: var(--color-red-500);
-  --border: --alpha(var(--color-black) / 8%);
-  --input: --alpha(var(--color-black) / 10%);
-  --ring: oklch(0.488 0.217 264);
-  --destructive-foreground: var(--color-red-700);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-700);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-700);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-700);
+  --background: #f8f9fb;
+  --foreground: #1a1d2e;
+  --card: #ffffff;
+  --card-foreground: #1a1d2e;
+  --popover: #ffffff;
+  --popover-foreground: #1a1d2e;
+  --primary: #5a67d8;
+  --primary-foreground: #ffffff;
+  --secondary: color-mix(in srgb, #5a67d8 7%, #ffffff);
+  --secondary-foreground: #1a1d2e;
+  --muted: color-mix(in srgb, #6b7a94 10%, #ffffff);
+  --muted-foreground: #6b7a94;
+  --accent: color-mix(in srgb, #5a67d8 10%, #ffffff);
+  --accent-foreground: #1a1d2e;
+  --destructive: #cf4655;
+  --border: #e2e6ef;
+  --input: #d0d6e3;
+  --ring: #5a67d8;
+  --destructive-foreground: #a33a44;
+  --info: #5a67d8;
+  --info-foreground: #3a49a0;
+  --success: #36b37e;
+  --success-foreground: #1f8a5e;
+  --warning: #e2a336;
+  --warning-foreground: #7a5c1a;
+  --sidebar: color-mix(in srgb, #ffffff 94%, #5a67d8 6%);
+  --sidebar-foreground: #1a1d2e;
+  --sidebar-accent: color-mix(in srgb, #5a67d8 10%, #ffffff);
+  --sidebar-accent-foreground: #1a1d2e;
+  --sidebar-border: #e2e6ef;
 
   @variant dark {
     color-scheme: dark;
-    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
-    --app-chrome-background: var(--background);
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.588 0.217 264);
-    --primary-foreground: var(--color-white);
-    --secondary: --alpha(var(--color-white) / 4%);
-    --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: --alpha(var(--color-white) / 4%);
-    --accent-foreground: var(--color-neutral-100);
-    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --border: --alpha(var(--color-white) / 6%);
-    --input: --alpha(var(--color-white) / 8%);
-    --ring: oklch(0.588 0.217 264);
-    --destructive-foreground: var(--color-red-400);
-    --info: var(--color-blue-500);
-    --info-foreground: var(--color-blue-400);
-    --success: var(--color-emerald-500);
-    --success-foreground: var(--color-emerald-400);
-    --warning: var(--color-amber-500);
-    --warning-foreground: var(--color-amber-400);
+    --background: #0c1018;
+    --foreground: #edf2ff;
+    --card: #1a1f30;
+    --card-foreground: #edf2ff;
+    --popover: #1a1f30;
+    --popover-foreground: #edf2ff;
+    --primary: #5a67d8;
+    --primary-foreground: #f8fbff;
+    --secondary: color-mix(in srgb, #5a67d8 10%, #10131d);
+    --secondary-foreground: #edf2ff;
+    --muted: color-mix(in srgb, #10131d 90%, #5a67d8 10%);
+    --muted-foreground: #9eaac0;
+    --accent: color-mix(in srgb, #5a67d8 12%, #10131d);
+    --accent-foreground: #edf2ff;
+    --destructive: #d9525e;
+    --border: color-mix(in srgb, #9eaac0 18%, #10131d);
+    --input: color-mix(in srgb, #9eaac0 26%, #10131d);
+    --ring: #5a67d8;
+    --destructive-foreground: #f5c5ca;
+    --info: #5a67d8;
+    --info-foreground: #5a67d8;
+    --success: #36b37e;
+    --success-foreground: #6ae0a0;
+    --warning: #e2a336;
+    --warning-foreground: #f0d080;
+    --sidebar: #0e1220;
+    --sidebar-foreground: #eaf1ff;
+    --sidebar-accent: color-mix(in srgb, #5a67d8 14%, #1a1f30);
+    --sidebar-accent-foreground: #edf2ff;
+    --sidebar-border: color-mix(in srgb, #5a67d8 10%, #10131d);
   }
 }
 
@@ -139,6 +148,28 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
+  background:
+    radial-gradient(
+      72rem 38rem at -6% -12%,
+      color-mix(in srgb, var(--primary) 9%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      46rem 26rem at 104% -4%,
+      color-mix(in srgb, var(--success) 6%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      48rem 24rem at 50% 118%,
+      color-mix(in srgb, var(--primary) 5%, transparent),
+      transparent 66%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 92%, var(--card)) 0%,
+      var(--background) 54%,
+      color-mix(in srgb, var(--background) 96%, var(--card)) 100%
+    );
 }
 
 html,
@@ -153,19 +184,43 @@ body,
   overscroll-behavior-y: none;
 }
 
+body::before,
 body::after {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-size: 256px 256px;
+}
+
+body::before {
+  opacity: 0.7;
+  background:
+    radial-gradient(
+      24rem 20rem at 18% 12%,
+      color-mix(in srgb, var(--primary) 6%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      18rem 14rem at 82% 10%,
+      color-mix(in srgb, var(--success) 5%, transparent),
+      transparent 72%
+    );
+}
+
+body::after {
+  opacity: 0.2;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, white 3%, transparent) 0%,
+    transparent 42%,
+    color-mix(in srgb, var(--primary) 3%, transparent) 100%
+  );
 }
 
 pre,
-code {
+code,
+textarea,
+input {
   font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
@@ -192,20 +247,20 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: color-mix(in srgb, var(--input) 82%, var(--primary));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: color-mix(in srgb, var(--input) 68%, var(--primary));
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--input) 80%, var(--primary));
 }
 
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: color-mix(in srgb, var(--input) 65%, var(--primary));
 }
 
 .turn-chip-strip {
@@ -300,9 +355,9 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown a {
-  color: var(--info-foreground);
+  color: var(--primary);
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--info-foreground) 40%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--primary) 36%, transparent);
 }
 
 .chat-markdown a:hover {
@@ -378,7 +433,8 @@ label:has(> select#reasoning-effort) select {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 0.75rem;
+  line-height: 1.5;
+  font-size: 0.875rem;
 }
 
 .markdown-file-link-tooltip-scroll {
@@ -493,13 +549,13 @@ label:has(> select#reasoning-effort) select {
 .ultrathink-frame {
   --ultrathink-spectrum: linear-gradient(
     120deg,
-    #ff6b6b 0%,
-    #f59e0b 18%,
-    #22c55e 36%,
-    #14b8a6 54%,
-    #3b82f6 72%,
-    #ec4899 90%,
-    #ff6b6b 100%
+    #e0868a 0%,
+    #cfa65c 18%,
+    #4aaf88 36%,
+    #52a8a0 54%,
+    #7085c8 72%,
+    #c0849e 90%,
+    #e0868a 100%
   );
   background-image: var(--ultrathink-spectrum);
   background-size: 220% 220%;

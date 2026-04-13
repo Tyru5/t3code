@@ -58,6 +58,7 @@ import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
+import { removePromptSkill } from "../../promptSkillPrefix";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
@@ -980,6 +981,19 @@ export const ChatComposer = memo(
       ],
     );
 
+    const removePromptSkillByName = useCallback(
+      (skillName: string) => {
+        const nextPrompt = removePromptSkill(promptRef.current, skillName);
+        if (nextPrompt === promptRef.current) return;
+        promptRef.current = nextPrompt;
+        setPrompt(nextPrompt);
+        const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
+        setComposerCursor(nextCursor);
+        setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      },
+      [promptRef, setPrompt],
+    );
+
     // ------------------------------------------------------------------
     // Sync refs back to parent
     // ------------------------------------------------------------------
@@ -1872,6 +1886,7 @@ export const ChatComposer = memo(
                     : []
                 }
                 skills={selectedProviderStatus?.skills ?? []}
+                onRemoveSkill={removePromptSkillByName}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}

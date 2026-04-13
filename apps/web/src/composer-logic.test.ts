@@ -60,28 +60,35 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("keeps slash command detection active for provider commands", () => {
-    const text = "/rev";
+  it("detects /skills while typing a prefix", () => {
+    const text = "/sk";
     const trigger = detectComposerTrigger(text, text.length);
 
     expect(trigger).toEqual({
       kind: "slash-command",
-      query: "rev",
+      query: "sk",
       rangeStart: 0,
       rangeEnd: text.length,
     });
   });
 
-  it("detects $skill trigger at cursor", () => {
-    const text = "Use $gh-fi";
+  it("detects a skill query while typing in the leading skill prefix", () => {
+    const text = "/review /re";
     const trigger = detectComposerTrigger(text, text.length);
 
     expect(trigger).toEqual({
-      kind: "skill",
-      query: "gh-fi",
-      rangeStart: "Use ".length,
+      kind: "slash-command",
+      query: "re",
+      rangeStart: "/review ".length,
       rangeEnd: text.length,
     });
+  });
+
+  it("does not detect a skill trigger for slash text in the message body", () => {
+    const text = "/review explain /re";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toBeNull();
   });
 
   it("detects @path trigger in the middle of existing text", () => {
@@ -158,10 +165,10 @@ describe("expandCollapsedComposerCursor", () => {
     expect(detectComposerTrigger(text, expandedCursor)).toBeNull();
   });
 
-  it("maps collapsed skill cursor to expanded text cursor", () => {
-    const text = "run $review-follow-up then";
-    const collapsedCursorAfterSkill = "run ".length + 2;
-    const expandedCursorAfterSkill = "run $review-follow-up ".length;
+  it("maps collapsed skill-chip cursors to expanded prompt cursors", () => {
+    const text = "/review explain this";
+    const collapsedCursorAfterSkill = 1;
+    const expandedCursorAfterSkill = "/review".length;
 
     expect(expandCollapsedComposerCursor(text, collapsedCursorAfterSkill)).toBe(
       expandedCursorAfterSkill,
@@ -184,6 +191,13 @@ describe("collapseExpandedComposerCursor", () => {
     );
   });
 
+  it("maps expanded skill-chip cursors back to collapsed cursors", () => {
+    const text = "/review explain this";
+    const expandedCursorAfterSkill = "/review".length;
+
+    expect(collapseExpandedComposerCursor(text, expandedCursorAfterSkill)).toBe(1);
+  });
+
   it("keeps replacement cursors aligned when another mention already exists earlier", () => {
     const text = "open @AGENTS.md then @src/index.ts ";
     const expandedCursor = text.length;
@@ -191,16 +205,6 @@ describe("collapseExpandedComposerCursor", () => {
 
     expect(collapsedCursor).toBe("open ".length + 1 + " then ".length + 2);
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
-  });
-
-  it("maps expanded skill cursor back to collapsed cursor", () => {
-    const text = "run $review-follow-up then";
-    const collapsedCursorAfterSkill = "run ".length + 2;
-    const expandedCursorAfterSkill = "run $review-follow-up ".length;
-
-    expect(collapseExpandedComposerCursor(text, expandedCursorAfterSkill)).toBe(
-      collapsedCursorAfterSkill,
-    );
   });
 });
 
@@ -278,13 +282,11 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
 
-  it("treats skill pills as inline tokens for adjacency checks", () => {
-    const text = "run $review-follow-up next";
-    const tokenStart = "run ".length;
-    const tokenEnd = tokenStart + 1;
+  it("treats skill chips as inline tokens for adjacency checks", () => {
+    const text = "/review explain this";
 
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, 0, "right")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, 1, "left")).toBe(true);
   });
 });
 
@@ -295,6 +297,10 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("parses standalone /default command", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+  });
+
+  it("parses standalone /skills command", () => {
+    expect(parseStandaloneComposerSlashCommand(" /skills ")).toBe("skills");
   });
 
   it("ignores slash commands with extra message text", () => {

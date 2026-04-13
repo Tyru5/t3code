@@ -239,10 +239,10 @@ interface ProjectDraftSession extends DraftSessionState {
  * - `DraftId` for pre-thread draft sessions
  * - `ScopedThreadRef` for server-backed threads
  *
- * Raw `ThreadId` is intentionally excluded so callers cannot drop environment
- * identity for real threads.
+ * Raw `ThreadId` is also accepted as a legacy compatibility input while the
+ * remaining single-environment callers are migrated to scoped refs.
  */
-type ComposerThreadTarget = ScopedThreadRef | DraftId;
+export type ComposerThreadTarget = ScopedThreadRef | DraftId | ThreadId;
 
 /**
  * Persisted store for composer content plus draft-session metadata.
@@ -253,7 +253,9 @@ type ComposerThreadTarget = ScopedThreadRef | DraftId;
  */
 interface ComposerDraftStoreState {
   draftsByThreadKey: Record<string, ComposerThreadDraftState>;
+  readonly draftsByThreadId: Record<string, ComposerThreadDraftState>;
   draftThreadsByThreadKey: Record<string, DraftThreadState>;
+  readonly draftThreadsByThreadId: Record<string, DraftThreadState>;
   logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
   stickyModelSelectionByProvider: Partial<Record<ProviderKind, ModelSelection>>;
   stickyActiveProvider: ProviderKind | null;
@@ -263,6 +265,7 @@ interface ComposerDraftStoreState {
   getDraftThreadByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
   getDraftSessionByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
   getDraftThreadByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
+  getDraftThreadByProjectId: (projectId: ProjectId) => ProjectDraftSession | null;
   getDraftSessionByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
   /** Reads mutable draft-session metadata by `DraftId`. */
   getDraftSession: (draftId: DraftId) => DraftSessionState | null;
@@ -871,7 +874,7 @@ function logicalProjectDraftKey(logicalProjectKey: string): string {
  * Draft sessions are keyed by `DraftId`. Real threads are keyed by
  * `ScopedThreadRef` so environment identity is always preserved.
  */
-function composerTargetKey(target: ScopedThreadRef | DraftId): string {
+function composerTargetKey(target: ComposerThreadTarget): string {
   if (typeof target === "string") {
     return target.trim();
   }
@@ -913,8 +916,8 @@ function normalizeComposerTarget(
   target: ComposerThreadTarget,
 ): ComposerThreadTarget | null {
   if (typeof target === "string") {
-    const draftId = target.trim();
-    return draftId.length > 0 ? DraftId.make(draftId) : null;
+    const normalizedId = target.trim();
+    return normalizedId.length > 0 ? (normalizedId as DraftId | ThreadId) : null;
   }
   return target;
 }
@@ -942,6 +945,22 @@ function resolveComposerDraftKey(
     }
     return scopedKey;
   }
+  if (state.draftsByThreadKey[normalizedTarget]) {
+    return normalizedTarget;
+  }
+  const matchingDraftEntry = Object.entries(state.draftThreadsByThreadKey).find(
+    ([, draftThread]) => draftThread.threadId === normalizedTarget,
+  );
+  if (matchingDraftEntry) {
+    return matchingDraftEntry[0];
+  }
+  const matchingScopedEntry = Object.keys(state.draftsByThreadKey).find((threadKey) => {
+    const parsed = parseScopedThreadKey(threadKey);
+    return parsed?.threadId === normalizedTarget;
+  });
+  if (matchingScopedEntry) {
+    return matchingScopedEntry;
+  }
   const threadKey = composerTargetKey(normalizedTarget);
   return threadKey.length > 0 ? threadKey : null;
 }
@@ -957,7 +976,9 @@ function resolveComposerThreadId(
   if (typeof normalizedTarget !== "string") {
     return normalizedTarget.threadId;
   }
-  return state.draftThreadsByThreadKey[normalizedTarget]?.threadId ?? null;
+  return (
+    state.draftThreadsByThreadKey[normalizedTarget]?.threadId ?? (normalizedTarget as ThreadId)
+  );
 }
 
 function getComposerDraftState(
@@ -1770,7 +1791,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
       return {
         draftsByThreadKey: {},
+        get draftsByThreadId() {
+          return Object.fromEntries(
+            Object.entries(this.draftsByThreadKey).map(([threadKey, draft]) => [
+              parseScopedThreadKey(threadKey)?.threadId ?? threadKey,
+              draft,
+            ]),
+          ) as Record<string, ComposerThreadDraftState>;
+        },
         draftThreadsByThreadKey: {},
+        get draftThreadsByThreadId() {
+          return Object.fromEntries(
+            Object.values(this.draftThreadsByThreadKey as Record<string, DraftThreadState>).map(
+              (draftThread) => [draftThread.threadId, draftThread],
+            ),
+          ) as Record<string, DraftThreadState>;
+        },
         logicalProjectDraftThreadKeyByLogicalProjectKey: {},
         stickyModelSelectionByProvider: {},
         stickyActiveProvider: null,
@@ -1796,6 +1832,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         },
         getDraftThreadByProjectRef: (projectRef) => {
           return get().getDraftSessionByProjectRef(projectRef);
+        },
+        getDraftThreadByProjectId: (projectId) => {
+          for (const [draftId, draftThread] of Object.entries(get().draftThreadsByThreadKey)) {
+            if (isDraftThreadPromoting(draftThread)) {
+              continue;
+            }
+            if (draftThread.projectId === projectId) {
+              return toProjectDraftSession(DraftId.make(draftId), draftThread);
+            }
+          }
+          return null;
         },
         getDraftSessionByProjectRef: (projectRef) => {
           for (const [draftId, draftThread] of Object.entries(get().draftThreadsByThreadKey)) {
@@ -1825,7 +1872,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         },
         getDraftThread: (threadRef) => {
           if (typeof threadRef === "string") {
-            return get().getDraftSession(DraftId.make(threadRef));
+            const byDraftId = get().getDraftSession(DraftId.make(threadRef));
+            if (byDraftId) {
+              return byDraftId;
+            }
+            return (
+              Object.values(get().draftThreadsByThreadKey).find(
+                (draftSession) => draftSession.threadId === threadRef,
+              ) ?? null
+            );
           }
           return get().getDraftSessionByRef(threadRef);
         },

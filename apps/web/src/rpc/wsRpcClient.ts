@@ -1,12 +1,14 @@
 import {
+  type AuthAccessStreamEvent,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type GitStatusResult,
   type GitStatusStreamEvent,
-  type LocalApi,
+  type NativeApi,
   ORCHESTRATION_WS_METHODS,
   type ServerSettingsPatch,
+  type SkillCatalogResult,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -73,12 +75,13 @@ export interface WsRpcClient {
   };
   readonly shell: {
     readonly openInEditor: (input: {
-      readonly cwd: Parameters<LocalApi["shell"]["openInEditor"]>[0];
-      readonly editor: Parameters<LocalApi["shell"]["openInEditor"]>[1];
-    }) => ReturnType<LocalApi["shell"]["openInEditor"]>;
+      readonly cwd: Parameters<NativeApi["shell"]["openInEditor"]>[0];
+      readonly editor: Parameters<NativeApi["shell"]["openInEditor"]>[1];
+    }) => ReturnType<NativeApi["shell"]["openInEditor"]>;
   };
   readonly git: {
     readonly pull: RpcUnaryMethod<typeof WS_METHODS.gitPull>;
+    readonly mergePullRequest: RpcUnaryMethod<typeof WS_METHODS.gitMergePullRequest>;
     readonly refreshStatus: RpcUnaryMethod<typeof WS_METHODS.gitRefreshStatus>;
     readonly onStatus: (
       input: RpcInput<typeof WS_METHODS.subscribeGitStatus>,
@@ -99,19 +102,22 @@ export interface WsRpcClient {
     readonly preparePullRequestThread: RpcUnaryMethod<
       typeof WS_METHODS.gitPreparePullRequestThread
     >;
-    readonly mergePullRequest: RpcUnaryMethod<typeof WS_METHODS.gitMergePullRequest>;
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
+    readonly getSkillsCatalog: () => Promise<SkillCatalogResult>;
     readonly refreshProviders: RpcUnaryNoArgMethod<typeof WS_METHODS.serverRefreshProviders>;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
+    readonly subscribeAuthAccess: (
+      listener: (event: AuthAccessStreamEvent) => void,
+      options?: StreamSubscriptionOptions,
+    ) => () => void;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
-    readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
   };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
@@ -122,7 +128,31 @@ export interface WsRpcClient {
   };
 }
 
-export function createWsRpcClient(transport: WsTransport): WsRpcClient {
+let sharedWsRpcClient: WsRpcClient | null = null;
+
+const defaultWsRpcUrlProvider = async () => {
+  if (typeof window === "undefined") {
+    return "ws://localhost";
+  }
+  return window.location.origin.replace(/^http/i, "ws");
+};
+
+export function getWsRpcClient(): WsRpcClient {
+  if (sharedWsRpcClient) {
+    return sharedWsRpcClient;
+  }
+  sharedWsRpcClient = createWsRpcClient();
+  return sharedWsRpcClient;
+}
+
+export async function __resetWsRpcClientForTests() {
+  await sharedWsRpcClient?.dispose();
+  sharedWsRpcClient = null;
+}
+
+export function createWsRpcClient(
+  transport = new WsTransport(defaultWsRpcUrlProvider),
+): WsRpcClient {
   return {
     dispose: () => transport.dispose(),
     reconnect: async () => {
@@ -158,6 +188,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     },
     git: {
       pull: (input) => transport.request((client) => client[WS_METHODS.gitPull](input)),
+      mergePullRequest: (input) =>
+        transport.request((client) => client[WS_METHODS.gitMergePullRequest](input)),
       refreshStatus: (input) =>
         transport.request((client) => client[WS_METHODS.gitRefreshStatus](input)),
       onStatus: (input, listener, options) => {
@@ -204,11 +236,11 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.gitResolvePullRequest](input)),
       preparePullRequestThread: (input) =>
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
-      mergePullRequest: (input) =>
-        transport.request((client) => client[WS_METHODS.gitMergePullRequest](input)),
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),
+      getSkillsCatalog: () =>
+        transport.request((client) => client[WS_METHODS.serverGetSkillsCatalog]({})),
       refreshProviders: () =>
         transport.request((client) => client[WS_METHODS.serverRefreshProviders]({})),
       upsertKeybinding: (input) =>
@@ -216,6 +248,7 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
+      subscribeAuthAccess: (_listener, _options) => () => {},
       subscribeConfig: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeServerConfig]({}),
@@ -225,12 +258,6 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       subscribeLifecycle: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
-          listener,
-          options,
-        ),
-      subscribeAuthAccess: (listener, options) =>
-        transport.subscribe(
-          (client) => client[WS_METHODS.subscribeAuthAccess]({}),
           listener,
           options,
         ),
