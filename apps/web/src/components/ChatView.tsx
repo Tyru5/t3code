@@ -22,12 +22,17 @@ import {
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -36,7 +41,13 @@ import { useGitStatus } from "~/lib/gitStatusState";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { invalidateSkillsCatalogQuery, skillsCatalogQueryOptions } from "~/lib/skillsReactQuery";
 import { isElectron } from "../env";
+import { usePrimaryEnvironmentId } from "../environments/primary/context";
+import {
+  useSavedEnvironmentRegistryStore,
+  useSavedEnvironmentRuntimeStore,
+} from "../environments/runtime";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { deriveLogicalProjectKey } from "../logicalProject";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -76,7 +87,8 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { useStore } from "../store";
+import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef, useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -111,12 +123,15 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   ListTodoIcon,
+  type LucideIcon,
   LockIcon,
   LockOpenIcon,
+  PenLineIcon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { cn, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
@@ -158,12 +173,14 @@ import {
 } from "../lib/terminalContext";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import {
-  resolveComposerFooterContentWidth,
-  shouldForceCompactComposerFooterForFit,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "./composerFooterLayout";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import {
+  selectThreadTerminalLaunchContext,
+  selectThreadTerminalState,
+  useTerminalStateStore,
+} from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -321,6 +338,27 @@ function formatOutgoingPrompt(params: {
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const runtimeModeConfig: Record<
+  RuntimeMode,
+  { label: string; description: string; icon: LucideIcon }
+> = {
+  "approval-required": {
+    label: "Supervised",
+    description: "Ask before commands and file changes.",
+    icon: LockIcon,
+  },
+  "auto-accept-edits": {
+    label: "Auto-accept edits",
+    description: "Auto-approve edits, ask before other actions.",
+    icon: PenLineIcon,
+  },
+  "full-access": {
+    label: "Full access",
+    description: "Allow commands and edits without prompts.",
+    icon: LockOpenIcon,
+  },
+};
+const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -349,6 +387,102 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+  interactionMode: ProviderInteractionMode;
+  runtimeMode: RuntimeMode;
+  showPlanToggle: boolean;
+  planSidebarOpen: boolean;
+  onToggleInteractionMode: () => void;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onTogglePlanSidebar: () => void;
+}) {
+  const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
+  const RuntimeModeIcon = runtimeModeOption.icon;
+
+  return (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
+      <Button
+        variant="ghost"
+        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+        size="sm"
+        type="button"
+        onClick={props.onToggleInteractionMode}
+        title={
+          props.interactionMode === "plan"
+            ? "Plan mode — click to return to normal build mode"
+            : "Default mode — click to enter plan mode"
+        }
+      >
+        <BotIcon />
+        <span className="sr-only sm:not-sr-only">
+          {props.interactionMode === "plan" ? "Plan" : "Build"}
+        </span>
+      </Button>
+
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
+      <Select
+        value={props.runtimeMode}
+        onValueChange={(value) => props.onRuntimeModeChange(value!)}
+      >
+        <SelectTrigger
+          variant="ghost"
+          size="sm"
+          className="font-medium"
+          aria-label="Runtime mode"
+          title={runtimeModeOption.description}
+        >
+          <RuntimeModeIcon className="size-4" />
+          <SelectValue>{runtimeModeOption.label}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup alignItemWithTrigger={false}>
+          {runtimeModeOptions.map((mode) => {
+            const option = runtimeModeConfig[mode];
+            const OptionIcon = option.icon;
+            return (
+              <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                    <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    {option.label}
+                  </span>
+                  <span className="text-muted-foreground text-xs leading-4">
+                    {option.description}
+                  </span>
+                </div>
+              </SelectItem>
+            );
+          })}
+        </SelectPopup>
+      </Select>
+
+      {props.showPlanToggle ? (
+        <>
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          <Button
+            variant="ghost"
+            className={cn(
+              "shrink-0 whitespace-nowrap px-2 sm:px-3",
+              props.planSidebarOpen
+                ? "text-blue-400 hover:text-blue-300"
+                : "text-muted-foreground/70 hover:text-foreground/80",
+            )}
+            size="sm"
+            type="button"
+            onClick={props.onTogglePlanSidebar}
+            title={props.planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
+          >
+            <ListTodoIcon />
+            <span className="sr-only sm:not-sr-only">Plan</span>
+          </Button>
+        </>
+      ) : null}
+    </>
+  );
+});
 
 type ChatViewProps =
   | {
@@ -470,7 +604,7 @@ function PersistentThreadTerminalDrawer({
   );
   const project = useProjectById(serverThread?.projectId ?? draftThread?.projectId);
   const terminalState = useTerminalStateStore((state) =>
-    selectThreadTerminalState(state.terminalStateByThreadId, threadId),
+    selectThreadTerminalState(state.terminalStateByThreadKey, threadId),
   );
   const storeSetTerminalHeight = useTerminalStateStore((state) => state.setTerminalHeight);
   const storeSplitTerminal = useTerminalStateStore((state) => state.splitTerminal);
@@ -796,25 +930,27 @@ export default function ChatView(props: ChatViewProps) {
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
-  const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
+  const terminalStateByThreadKey = useTerminalStateStore((state) => state.terminalStateByThreadKey);
   const terminalState = useMemo(
-    () => selectThreadTerminalState(terminalStateByThreadId, threadId),
-    [terminalStateByThreadId, threadId],
+    () => selectThreadTerminalState(terminalStateByThreadKey, threadId),
+    [terminalStateByThreadKey, threadId],
   );
   const openTerminalThreadIds = useMemo(
     () =>
-      Object.entries(terminalStateByThreadId).flatMap(([nextThreadId, nextTerminalState]) =>
-        nextTerminalState.terminalOpen ? [nextThreadId as ThreadId] : [],
+      Object.entries(terminalStateByThreadKey).flatMap(([nextThreadKey, nextTerminalState]) =>
+        nextTerminalState.terminalOpen
+          ? [parseScopedThreadKey(nextThreadKey)?.threadId ?? (nextThreadKey as ThreadId)]
+          : [],
       ),
-    [terminalStateByThreadId],
+    [terminalStateByThreadKey],
   );
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
-  const storeServerTerminalLaunchContext = useTerminalStateStore(
-    (s) => s.terminalLaunchContextByThreadId[threadId] ?? null,
+  const storeServerTerminalLaunchContext = useTerminalStateStore((state) =>
+    selectThreadTerminalLaunchContext(state.terminalLaunchContextByThreadKey, threadId),
   );
   const storeClearTerminalLaunchContext = useTerminalStateStore(
     (s) => s.clearTerminalLaunchContext,
@@ -1162,6 +1298,10 @@ export default function ChatView(props: ChatViewProps) {
     settings,
   });
   const selectedProviderModels = getProviderModels(providerStatuses, selectedProvider);
+  const selectedProviderStatus = useMemo(
+    () => providerStatuses.find((provider) => provider.provider === selectedProvider),
+    [providerStatuses, selectedProvider],
+  );
   const composerProviderState = useMemo(
     () =>
       getComposerProviderState({
@@ -2426,6 +2566,63 @@ export default function ChatView(props: ChatViewProps) {
     );
   }, [composerMenuItems, composerMenuOpen]);
 
+  useLayoutEffect(() => {
+    const composerForm = composerFormRef.current;
+    if (!composerForm) {
+      return;
+    }
+
+    const measureFooterCompactness = () => {
+      const composerFormWidth = composerForm.clientWidth;
+      const footerCompact = shouldUseCompactComposerFooter(composerFormWidth, {
+        hasWideActions: composerFooterHasWideActions,
+      });
+      const primaryActionsCompact =
+        footerCompact &&
+        shouldUseCompactComposerPrimaryActions(composerFormWidth, {
+          hasWideActions: composerFooterHasWideActions,
+        });
+
+      return {
+        footerCompact,
+        primaryActionsCompact,
+      };
+    };
+
+    const applyCompactness = () => {
+      const nextCompactness = measureFooterCompactness();
+      setIsComposerFooterCompact((previous) =>
+        previous === nextCompactness.footerCompact ? previous : nextCompactness.footerCompact,
+      );
+      setIsComposerPrimaryActionsCompact((previous) =>
+        previous === nextCompactness.primaryActionsCompact
+          ? previous
+          : nextCompactness.primaryActionsCompact,
+      );
+    };
+
+    composerFormHeightRef.current = composerForm.getBoundingClientRect().height;
+    applyCompactness();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const [entry] = entries;
+      if (!entry) {
+        return;
+      }
+      composerFormHeightRef.current = entry.contentRect.height;
+      applyCompactness();
+    });
+
+    observer.observe(composerForm);
+    return () => {
+      observer.disconnect();
+    };
+  }, [activeThread?.id, composerFooterActionLayoutKey, composerFooterHasWideActions]);
+
   useEffect(() => {
     setIsRevertingCheckpoint(false);
   }, [activeThread?.id]);
@@ -2719,16 +2916,15 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadId, storeClearTerminalLaunchContext, terminalState.terminalOpen]);
 
   useEffect(() => {
-    if (!activeThreadKey) return;
-    const previous = terminalOpenByThreadRef.current[activeThreadKey] ?? false;
+    const previous = terminalOpenByThreadRef.current[routeThreadKey] ?? false;
     const current = Boolean(terminalState.terminalOpen);
 
     if (!previous && current) {
-      terminalOpenByThreadRef.current[activeThreadKey] = current;
+      terminalOpenByThreadRef.current[routeThreadKey] = current;
       setTerminalFocusRequestId((value) => value + 1);
       return;
     } else if (previous && !current) {
-      terminalOpenByThreadRef.current[activeThreadKey] = current;
+      terminalOpenByThreadRef.current[routeThreadKey] = current;
       const frame = window.requestAnimationFrame(() => {
         focusComposer();
       });
@@ -2737,8 +2933,8 @@ export default function ChatView(props: ChatViewProps) {
       };
     }
 
-    terminalOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposer, terminalState.terminalOpen]);
+    terminalOpenByThreadRef.current[routeThreadKey] = current;
+  }, [focusComposer, routeThreadKey, terminalState.terminalOpen]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {

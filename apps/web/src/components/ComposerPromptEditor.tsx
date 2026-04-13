@@ -37,6 +37,7 @@ import {
   type SerializedTextNode,
   type Spread,
 } from "lexical";
+import { type ServerProviderSkill } from "@t3tools/contracts";
 import {
   createContext,
   forwardRef,
@@ -72,9 +73,31 @@ import {
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
 } from "./composerInlineChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { XIcon } from "lucide-react";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
+const COMPOSER_SURROUNDING_PAIRS = {
+  "(": ")",
+  "[": "]",
+  "{": "}",
+  "<": ">",
+  "'": "'",
+  '"': '"',
+  "`": "`",
+  "*": "*",
+  _: "_",
+  "~": "~",
+  "«": "»",
+  "“": "”",
+  "‘": "’",
+} as const;
+
+type ComposerSkillDefinition = Pick<
+  ServerProviderSkill,
+  "name" | "description" | "displayName" | "shortDescription"
+>;
+const EMPTY_COMPOSER_SKILLS: ReadonlyArray<ComposerSkillDefinition> = [];
 
 type SerializedComposerMentionNode = Spread<
   {
@@ -106,9 +129,11 @@ type SerializedComposerSkillNode = Spread<
 const ComposerInlineTokenActionsContext = createContext<{
   onRemoveSkill: (skillName: string) => void;
   onRemoveTerminalContext: (contextId: string) => void;
+  skillsByName: ReadonlyMap<string, ComposerSkillDefinition>;
 }>({
   onRemoveSkill: () => {},
   onRemoveTerminalContext: () => {},
+  skillsByName: new Map<string, ComposerSkillDefinition>(),
 });
 
 class ComposerMentionNode extends TextNode {
@@ -184,19 +209,22 @@ function $createComposerMentionNode(path: string): ComposerMentionNode {
 }
 
 function ComposerSkillChip(props: { skillName: string }) {
-  const { onRemoveSkill } = useContext(ComposerInlineTokenActionsContext);
-
-  return (
+  const { onRemoveSkill, skillsByName } = useContext(ComposerInlineTokenActionsContext);
+  const skill = skillsByName.get(props.skillName);
+  const label = skill?.displayName ?? `/${props.skillName}`;
+  const description = skill?.description ?? skill?.shortDescription ?? null;
+  const chip = (
     <span
       className={COMPOSER_INLINE_CHIP_CLASS_NAME}
       contentEditable={false}
-      data-composer-skill-chip={props.skillName}
+      data-composer-skill-chip="true"
+      data-composer-skill-name={props.skillName}
     >
-      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{`/${props.skillName}`}</span>
+      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{label}</span>
       <button
         type="button"
         className={COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME}
-        aria-label={`Remove /${props.skillName} skill`}
+        aria-label={`Remove ${label} skill`}
         data-composer-skill-chip-dismiss={props.skillName}
         tabIndex={-1}
         onMouseDown={(event) => {
@@ -209,6 +237,19 @@ function ComposerSkillChip(props: { skillName: string }) {
         <XIcon className="size-3" />
       </button>
     </span>
+  );
+
+  if (!description) {
+    return chip;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+        {description}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -656,6 +697,27 @@ function $setSelectionAtComposerOffset(nextOffset: number): void {
   $setSelection(selection);
 }
 
+function $setSelectionRangeAtComposerOffsets(anchorOffset: number, focusOffset: number): void {
+  const root = $getRoot();
+  const composerLength = $getComposerRootLength();
+  const boundedAnchor = Math.max(0, Math.min(anchorOffset, composerLength));
+  const boundedFocus = Math.max(0, Math.min(focusOffset, composerLength));
+  const anchorPoint = findSelectionPointAtOffset(root, { value: boundedAnchor }) ?? {
+    key: root.getKey(),
+    offset: root.getChildren().length,
+    type: "element" as const,
+  };
+  const focusPoint = findSelectionPointAtOffset(root, { value: boundedFocus }) ?? {
+    key: root.getKey(),
+    offset: root.getChildren().length,
+    type: "element" as const,
+  };
+  const selection = $createRangeSelection();
+  selection.anchor.set(anchorPoint.key, anchorPoint.offset, anchorPoint.type);
+  selection.focus.set(focusPoint.key, focusPoint.offset, focusPoint.type);
+  $setSelection(selection);
+}
+
 function $readSelectionOffsetFromEditorState(fallback: number): number {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
@@ -676,6 +738,58 @@ function $readExpandedSelectionOffsetFromEditorState(fallback: number): number {
   const offset = getExpandedAbsoluteOffsetForPoint(anchorNode, selection.anchor.offset);
   const expandedLength = $getRoot().getTextContent().length;
   return Math.max(0, Math.min(offset, expandedLength));
+}
+
+function $readSelectionRangeFromEditorState(): {
+  collapsedStart: number;
+  collapsedEnd: number;
+  expandedStart: number;
+  expandedEnd: number;
+  isBackward: boolean;
+} | null {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || selection.isCollapsed()) {
+    return null;
+  }
+
+  const composerLength = $getComposerRootLength();
+  const expandedLength = $getRoot().getTextContent().length;
+  const collapsedAnchor = Math.max(
+    0,
+    Math.min(
+      getAbsoluteOffsetForPoint(selection.anchor.getNode(), selection.anchor.offset),
+      composerLength,
+    ),
+  );
+  const collapsedFocus = Math.max(
+    0,
+    Math.min(
+      getAbsoluteOffsetForPoint(selection.focus.getNode(), selection.focus.offset),
+      composerLength,
+    ),
+  );
+  const expandedAnchor = Math.max(
+    0,
+    Math.min(
+      getExpandedAbsoluteOffsetForPoint(selection.anchor.getNode(), selection.anchor.offset),
+      expandedLength,
+    ),
+  );
+  const expandedFocus = Math.max(
+    0,
+    Math.min(
+      getExpandedAbsoluteOffsetForPoint(selection.focus.getNode(), selection.focus.offset),
+      expandedLength,
+    ),
+  );
+
+  return {
+    collapsedStart: Math.min(collapsedAnchor, collapsedFocus),
+    collapsedEnd: Math.max(collapsedAnchor, collapsedFocus),
+    expandedStart: Math.min(expandedAnchor, expandedFocus),
+    expandedEnd: Math.max(expandedAnchor, expandedFocus),
+    isBackward: expandedAnchor > expandedFocus,
+  };
 }
 
 function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
@@ -755,7 +869,7 @@ export interface ComposerPromptEditorHandle {
 interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
-  skills?: ReadonlyArray<unknown>;
+  skills?: ReadonlyArray<ComposerSkillDefinition>;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   disabled: boolean;
   placeholder: string;
@@ -1002,9 +1116,87 @@ function ComposerInlineTokenBackspacePlugin() {
   return null;
 }
 
+function ComposerSelectionSurroundPlugin(props: {
+  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+}) {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const rootElement = editor.getRootElement();
+    if (!rootElement) {
+      return;
+    }
+
+    const handleBeforeInput = (event: InputEvent) => {
+      if (event.defaultPrevented || event.inputType !== "insertText") {
+        return;
+      }
+
+      const open = event.data ?? "";
+      const close = COMPOSER_SURROUNDING_PAIRS[open as keyof typeof COMPOSER_SURROUNDING_PAIRS];
+      if (!close) {
+        return;
+      }
+
+      let handled = false;
+      editor.update(() => {
+        const selectionRange = $readSelectionRangeFromEditorState();
+        if (!selectionRange) {
+          return;
+        }
+
+        const selectedCollapsedLength = selectionRange.collapsedEnd - selectionRange.collapsedStart;
+        const selectedExpandedLength = selectionRange.expandedEnd - selectionRange.expandedStart;
+        if (selectedExpandedLength === 0 || selectedCollapsedLength !== selectedExpandedLength) {
+          return;
+        }
+
+        const currentText = $getRoot().getTextContent();
+        const selectedText = currentText.slice(
+          selectionRange.expandedStart,
+          selectionRange.expandedEnd,
+        );
+        const nextText = `${currentText.slice(0, selectionRange.expandedStart)}${open}${selectedText}${close}${currentText.slice(selectionRange.expandedEnd)}`;
+        const nextExpandedSelectionStart = selectionRange.expandedStart + open.length;
+        const nextExpandedSelectionEnd = nextExpandedSelectionStart + selectedText.length;
+        const nextCollapsedSelectionStart = collapseExpandedComposerCursor(
+          nextText,
+          nextExpandedSelectionStart,
+        );
+        const nextCollapsedSelectionEnd = collapseExpandedComposerCursor(
+          nextText,
+          nextExpandedSelectionEnd,
+        );
+
+        $setComposerEditorPrompt(nextText, props.terminalContexts);
+        $setSelectionRangeAtComposerOffsets(
+          selectionRange.isBackward ? nextCollapsedSelectionEnd : nextCollapsedSelectionStart,
+          selectionRange.isBackward ? nextCollapsedSelectionStart : nextCollapsedSelectionEnd,
+        );
+        handled = true;
+      });
+
+      if (!handled) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    rootElement.addEventListener("beforeinput", handleBeforeInput);
+    return () => {
+      rootElement.removeEventListener("beforeinput", handleBeforeInput);
+    };
+  }, [editor, props.terminalContexts]);
+
+  return null;
+}
+
 function ComposerPromptEditorInner({
   value,
   cursor,
+  skills = EMPTY_COMPOSER_SKILLS,
   terminalContexts,
   disabled,
   placeholder,
@@ -1028,9 +1220,13 @@ function ComposerPromptEditorInner({
     terminalContextIds: terminalContexts.map((context) => context.id),
   });
   const isApplyingControlledUpdateRef = useRef(false);
+  const skillsByName = useMemo(
+    () => new Map(skills.map((skill) => [skill.name, skill] as const)),
+    [skills],
+  );
   const inlineTokenActions = useMemo(
-    () => ({ onRemoveSkill, onRemoveTerminalContext }),
-    [onRemoveSkill, onRemoveTerminalContext],
+    () => ({ onRemoveSkill, onRemoveTerminalContext, skillsByName }),
+    [onRemoveSkill, onRemoveTerminalContext, skillsByName],
   );
 
   useEffect(() => {
@@ -1261,6 +1457,7 @@ function ComposerPromptEditorInner({
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
+        <ComposerSelectionSurroundPlugin terminalContexts={terminalContexts} />
         <HistoryPlugin />
       </div>
     </ComposerInlineTokenActionsContext.Provider>
@@ -1274,6 +1471,7 @@ export const ComposerPromptEditor = forwardRef<
   {
     value,
     cursor,
+    skills = EMPTY_COMPOSER_SKILLS,
     terminalContexts,
     disabled,
     placeholder,
@@ -1308,6 +1506,7 @@ export const ComposerPromptEditor = forwardRef<
       <ComposerPromptEditorInner
         value={value}
         cursor={cursor}
+        skills={skills}
         terminalContexts={terminalContexts}
         disabled={disabled}
         placeholder={placeholder}

@@ -16,6 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
@@ -29,6 +30,7 @@ import {
   wrappedTerminalLinkRangeIntersectsBufferLine,
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
+import { subscribeEnvironmentConnections } from "../environments/runtime";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -42,6 +44,8 @@ import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalSt
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+const MIN_TERMINAL_COLS = 20;
+const MIN_TERMINAL_ROWS = 5;
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -63,6 +67,15 @@ function writeTerminalSnapshot(terminal: Terminal, snapshot: TerminalSessionSnap
   if (snapshot.history.length > 0) {
     terminal.write(snapshot.history);
   }
+}
+
+function resolveTerminalDimensions(terminal: Terminal): { cols: number; rows: number } | null {
+  const cols = Number.isFinite(terminal.cols) ? Math.floor(terminal.cols) : 0;
+  const rows = Number.isFinite(terminal.rows) ? Math.floor(terminal.rows) : 0;
+  if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) {
+    return null;
+  }
+  return { cols, rows };
 }
 
 export function selectTerminalEventEntriesAfterSnapshot(
@@ -272,6 +285,11 @@ export function TerminalViewport({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const environmentId = threadRef.environmentId;
+  const environmentApiReady = useSyncExternalStore(
+    subscribeEnvironmentConnections,
+    () => readEnvironmentApi(environmentId) !== undefined,
+    () => false,
+  );
   const hasHandledExitRef = useRef(false);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
@@ -633,13 +651,13 @@ export function TerminalViewport({
         const activeFitAddon = fitAddonRef.current;
         if (!activeTerminal || !activeFitAddon) return;
         activeFitAddon.fit();
+        const dimensions = resolveTerminalDimensions(activeTerminal);
         const snapshot = await api.terminal.open({
           threadId,
           terminalId,
           cwd,
           ...(worktreePath !== undefined ? { worktreePath } : {}),
-          cols: activeTerminal.cols,
-          rows: activeTerminal.rows,
+          ...dimensions,
           ...(runtimeEnv ? { env: runtimeEnv } : {}),
         });
         if (disposed) return;
@@ -682,12 +700,15 @@ export function TerminalViewport({
       if (wasAtBottom) {
         activeTerminal.scrollToBottom();
       }
+      const dimensions = resolveTerminalDimensions(activeTerminal);
+      if (!dimensions) {
+        return;
+      }
       void api.terminal
         .resize({
           threadId,
           terminalId,
-          cols: activeTerminal.cols,
-          rows: activeTerminal.rows,
+          ...dimensions,
         })
         .catch(() => undefined);
     }, 30);
@@ -715,7 +736,16 @@ export function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, environmentId, runtimeEnv, terminalId, threadId]);
+  }, [
+    cwd,
+    environmentApiReady,
+    environmentId,
+    runtimeEnv,
+    terminalId,
+    threadId,
+    threadRef,
+    worktreePath,
+  ]);
 
   useEffect(() => {
     if (!autoFocus) return;
