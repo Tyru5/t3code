@@ -605,7 +605,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-            assert.deepStrictEqual(yield* registry.getProviders, []);
+            const initialProviders = yield* registry.getProviders;
+            assert.deepStrictEqual(
+              initialProviders.map((provider) => provider.provider),
+              ["codex", "claudeAgent"],
+            );
+            assert.strictEqual(
+              initialProviders.every((provider) => provider.status === "warning"),
+              true,
+            );
+            assert.strictEqual(
+              initialProviders.every((provider) => provider.models.length > 0),
+              true,
+            );
             assert.strictEqual(spawnCount, 0);
 
             const refreshed = yield* registry.refresh("codex");
@@ -657,7 +669,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             const registry = yield* ProviderRegistry;
 
             const initial = yield* registry.getProviders;
-            assert.deepStrictEqual(initial, []);
+            assert.strictEqual(
+              initial.find((provider) => provider.provider === "codex")?.status,
+              "warning",
+            );
+            assert.strictEqual(
+              initial.find((provider) => provider.provider === "codex")?.models.length! > 0,
+              true,
+            );
 
             const refreshed = yield* registry.refresh("codex");
             assert.strictEqual(

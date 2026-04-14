@@ -2987,6 +2987,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             aheadCount: 0,
             behindCount: 0,
             pr: null,
+            ci: null,
           }),
         );
         const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
