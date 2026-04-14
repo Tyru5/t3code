@@ -197,6 +197,7 @@ describe("ProviderCommandReactor", () => {
         aheadCount: 0,
         behindCount: 0,
         pr: null,
+        ci: null,
       }),
     );
     const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>((_) =>

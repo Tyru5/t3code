@@ -64,7 +64,7 @@ export const ProviderRegistryLive = Layer.effect(
     const fallbackByProvider = new Map(
       fallbackProviders.map((provider) => [provider.provider, provider] as const),
     );
-    const cachedProviders = yield* Effect.forEach(
+    const initialProviders = yield* Effect.forEach(
       PROVIDER_CACHE_IDS,
       (provider) => {
         const filePath = cachePathByProvider.get(provider)!;
@@ -73,7 +73,7 @@ export const ProviderRegistryLive = Layer.effect(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.map((cachedProvider) =>
             cachedProvider === undefined
-              ? undefined
+              ? fallbackProvider
               : hydrateCachedProvider({
                   cachedProvider,
                   fallbackProvider,
@@ -82,14 +82,8 @@ export const ProviderRegistryLive = Layer.effect(
         );
       },
       { concurrency: "unbounded" },
-    ).pipe(
-      Effect.map((providers) =>
-        orderProviderSnapshots(
-          providers.filter((provider): provider is ServerProvider => provider !== undefined),
-        ),
-      ),
-    );
-    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(cachedProviders);
+    ).pipe(Effect.map((providers) => orderProviderSnapshots(providers)));
+    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(initialProviders);
 
     const persistProvider = (provider: ServerProvider) =>
       writeProviderStatusCache({

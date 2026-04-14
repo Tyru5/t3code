@@ -617,10 +617,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 snapshot.threads.find((currentThread) => currentThread.id === input.threadId) ??
                 null;
               if (thread === null) {
-                return yield* Effect.fail(
-                  toSnapshotError(
-                    `Thread ${input.threadId} was not found in the orchestration snapshot`,
-                  ),
+                return yield* toSnapshotError(
+                  `Thread ${input.threadId} was not found in the orchestration snapshot`,
                 );
               }
 
