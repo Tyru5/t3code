@@ -2770,7 +2770,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
-        ...(effectiveEffort ? { effort: effectiveEffort } : {}),
+        // Claude Opus 4.7 supports "xhigh", but the SDK Options type has not caught up yet.
+        ...(effectiveEffort
+          ? { effort: effectiveEffort as NonNullable<ClaudeQueryOptions["effort"]> }
+          : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
