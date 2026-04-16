@@ -155,6 +155,7 @@ import {
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { useComposerHandleContext } from "../composerHandleContext";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -200,6 +201,7 @@ import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
+import { ChatComposer } from "./chat/ChatComposer";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -759,6 +761,7 @@ function PersistentThreadTerminalDrawer({
 }
 
 export default function ChatView(props: ChatViewProps) {
+  const composerRef = useComposerHandleContext();
   const {
     environmentId,
     threadId,
@@ -4508,7 +4511,7 @@ export default function ChatView(props: ChatViewProps) {
           {/* Input bar */}
           <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
             <ChatComposer
-              ref={composerRef}
+              ref={composerRef ?? undefined}
               composerDraftTarget={composerDraftTarget}
               environmentId={activeEnvironmentId ?? ("environment-local" as EnvironmentId)}
               routeKind={routeKind}
