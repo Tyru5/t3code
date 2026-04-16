@@ -53,6 +53,9 @@ export function createWsNativeApi(): NativeApi {
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,
     },
+    filesystem: {
+      browse: rpcClient.filesystem.browse,
+    },
     shell: {
       openInEditor: (cwd, editor) => rpcClient.shell.openInEditor({ cwd, editor }),
       openExternal: async (url) => {

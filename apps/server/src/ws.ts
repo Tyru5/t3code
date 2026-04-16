@@ -791,6 +791,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
             "rpc.aggregate": "workspace",
           }),
+        [WS_METHODS.filesystemBrowse]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemBrowse,
+            workspaceEntries.browse(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemBrowseError({
+                    message: cause.detail,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.subscribeGitStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeGitStatus,

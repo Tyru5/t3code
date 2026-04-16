@@ -222,6 +222,7 @@ export interface LocalApi {
 export interface EnvironmentApi {
   terminal: NativeApi["terminal"];
   projects: NativeApi["projects"];
+  filesystem: NativeApi["filesystem"];
   git: NativeApi["git"];
   orchestration: NativeApi["orchestration"];
 }
