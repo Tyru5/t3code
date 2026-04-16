@@ -7,6 +7,20 @@ import {
 } from "./backendReadiness";
 
 describe("waitForHttpReady", () => {
+  it("treats redirect responses as ready by default", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 302 }));
+
+    await waitForHttpReady("http://127.0.0.1:3773", {
+      fetchImpl,
+      timeoutMs: 1_000,
+      intervalMs: 0,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("returns once the backend serves the requested readiness path", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
